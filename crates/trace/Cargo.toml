@@ -1,0 +1,11 @@
+[package]
+name = "trace"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+common = {path = "../common"}
+
+arrow = {version="5"}
+serde = "1"
+serde_json = "1"
