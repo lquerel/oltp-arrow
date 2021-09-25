@@ -1,19 +1,27 @@
-use common::{Span, Link};
+use crate::arrow::{EntitySchema, FieldType};
+use crate::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use arrow::array::{ArrayRef, StringArray, StringBuilder, UInt32Array, UInt32Builder};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::error::ArrowError;
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
+use common::{Link, Span};
 use std::collections::HashMap;
 use std::sync::Arc;
-use arrow::datatypes::{Schema, Field, DataType};
-use crate::arrow::{EntitySchema, FieldType};
-use crate::attribute::{infer_attribute_types, add_attribute_fields, add_attribute_columns};
-use arrow::error::ArrowError;
-use arrow::array::{UInt32Builder, ArrayRef, UInt32Array, StringArray, StringBuilder};
-use arrow::record_batch::RecordBatch;
-use arrow::ipc::writer::StreamWriter;
 
 pub fn serialize_links(spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
-    let link_schema = infer_link_schema(&spans);
-    let links: Vec<(usize, &Link)> = spans.iter().enumerate()
+    let link_schema = infer_link_schema(spans);
+    let links: Vec<(usize, &Link)> = spans
+        .iter()
+        .enumerate()
         .filter(|(_, link)| link.links.is_some())
-        .flat_map(|(id, link)| link.links.as_ref().unwrap().iter().map(move |link| (id, link)))
+        .flat_map(|(id, link)| {
+            link.links
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(move |link| (id, link))
+        })
         .collect();
 
     let mut trace_state = StringBuilder::new(links.len());
@@ -22,24 +30,33 @@ pub fn serialize_links(spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
     for (_, link) in links.iter() {
         match link.dropped_attributes_count {
             Some(value) => dropped_attributes_count.append_value(value),
-            None => dropped_attributes_count.append_null()
+            None => dropped_attributes_count.append_null(),
         }?;
         match &link.trace_state {
             Some(value) => trace_state.append_value(value),
-            None => trace_state.append_null()
+            None => trace_state.append_null(),
         }?;
     }
 
     let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(UInt32Array::from_iter_values(links.iter().map(|(id, _)| *id as u32))),
-        Arc::new(StringArray::from_iter_values(links.iter().map(|(_, link)| link.trace_id.clone()))),
-        Arc::new(StringArray::from_iter_values(links.iter().map(|(_, link)| link.span_id.clone()))),
+        Arc::new(UInt32Array::from_iter_values(
+            links.iter().map(|(id, _)| *id as u32),
+        )),
+        Arc::new(StringArray::from_iter_values(
+            links.iter().map(|(_, link)| link.trace_id.clone()),
+        )),
+        Arc::new(StringArray::from_iter_values(
+            links.iter().map(|(_, link)| link.span_id.clone()),
+        )),
         Arc::new(trace_state.finish()),
         Arc::new(dropped_attributes_count.finish()),
     ];
 
     add_attribute_columns(
-        links.iter().map(|(_, link)| Some(&link.attributes)).collect(),
+        links
+            .iter()
+            .map(|(_, link)| Some(&link.attributes))
+            .collect(),
         &link_schema,
         &mut columns,
     );
@@ -73,5 +90,8 @@ pub fn infer_link_schema(spans: &[Span]) -> EntitySchema {
 
     add_attribute_fields(&attribute_types, &mut fields);
 
-    EntitySchema { schema: Arc::new(Schema::new(fields)), attribute_fields: attribute_types }
+    EntitySchema {
+        schema: Arc::new(Schema::new(fields)),
+        attribute_fields: attribute_types,
+    }
 }

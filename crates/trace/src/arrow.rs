@@ -1,14 +1,14 @@
-use serde_json::{StreamDeserializer};
-use serde_json::de::IoRead;
-use common::{Span};
-use std::io::Read;
-use arrow::datatypes::{Schema};
-use arrow::error::ArrowError;
-use std::sync::Arc;
-use std::collections::HashMap;
-use crate::span::serialize_spans;
 use crate::event::serialize_events;
 use crate::link::serialize_links;
+use crate::span::serialize_spans;
+use arrow::datatypes::Schema;
+use arrow::error::ArrowError;
+use common::Span;
+use serde_json::de::IoRead;
+use serde_json::StreamDeserializer;
+use std::collections::HashMap;
+use std::io::Read;
+use std::sync::Arc;
 
 #[derive(PartialEq, Debug)]
 pub enum FieldType {
