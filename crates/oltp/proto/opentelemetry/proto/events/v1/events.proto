@@ -1,0 +1,301 @@
+// Copyright 2019, OpenTelemetry Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package opentelemetry.proto.events.v1;
+
+import "opentelemetry/proto/common/v1/common.proto";
+import "opentelemetry/proto/resource/v1/resource.proto";
+
+option java_multiple_files = true;
+option java_package = "io.opentelemetry.proto.events.v1";
+option java_outer_classname = "EventsProto";
+option go_package = "github.com/open-telemetry/opentelemetry-proto/gen/go/events/v1";
+
+// ToDo histogram, summary, exemplar, ...
+// ToDo support missing values (validity bitmap) and different encodings
+// ToDo do we want to provide a stream oriented or query oriented solution? Stream = state = sticky connection
+// ToDo column encoding is missing (how to store dictionary)
+
+// A column-oriented collection of events from a Resource.
+message ResourceEvents {
+  // The resource for the events in this message.
+  // If this field is not set then no resource info is known.
+  opentelemetry.proto.resource.v1.Resource resource = 1;
+
+  // A list of events that originate from a resource.
+  repeated InstrumentationLibraryEvents instrumentation_library_events = 2;
+
+  // This schema_url applies to the data in the "resource" field. It does not apply
+  // to the data in the "instrumentation_library_events" field which have their own
+  // schema_url field.
+  string schema_url = 3;
+}
+
+// A collection of Events produced by an InstrumentationLibrary.
+message InstrumentationLibraryEvents {
+  // The instrumentation library information for the events in this message.
+  // Semantically when InstrumentationLibrary isn't set, it is equivalent with
+  // an empty instrumentation library name (unknown).
+  opentelemetry.proto.common.v1.InstrumentationLibrary instrumentation_library = 1;
+
+  // A list of batch of events that originate from an instrumentation library.
+  repeated BatchEvent batches = 2;
+
+  // dropped_events_count is the number of dropped events. If the value is 0, then no
+  // events were dropped.
+  uint32 dropped_events_count = 3;
+}
+
+// A typed collection of events with a columnar-oriented representation.
+// All the events in this collection share the same schema url.
+message BatchEvent {
+  // ToDo merge attributes and metrics into a single concept named field.
+  // ToDo new type of fields to add SeverityNumber, trace_id?, span_id?, flags?, trace_state?, parent_span_id?, SpanKind?, StatusCode?
+
+  // This schema_url applies to all events in this batch.
+  string schema_url = 1;
+
+  uint32 size = 2;
+
+  repeated fixed64 start_time_unix_nano_column = 3;
+
+  repeated fixed64 end_time_unix_nano_column = 4;
+
+  // A collection of equal-length columns
+  repeated Int64Column i64_values = 5;
+  repeated DoubleColumn f64_values = 6;
+  repeated StringColumn string_values = 7;
+  repeated BoolColumn bool_values = 8;
+  repeated BytesColumn bytes_values = 9;
+  repeated Int64SummaryColumn i64_summary_values = 10;
+  repeated DoubleSummaryColumn f64_summary_values = 11;
+  // ToDo Histogram
+
+  // A one to many relationship between an event and multiple typed entities such as exemplars, links, ...
+  repeated AuxiliaryEntity auxiliary_entities = 12;
+}
+
+// Can be used to represent a dictionary, links, exemplars, histogram, ...
+message AuxiliaryEntity {
+  enum LogicalType {
+    ATTRIBUTE = 0;
+    TRACE_EVENT = 1;
+    TRACE_LINK = 2;
+
+// ToDo
+//    HISTOGRAM = 3;
+//    QUANTILE = 4;
+//    EXEMPLAR = 5;
+//    DICTIONARY = 6;
+
+    OTHER = 1000;
+  }
+
+  string schema_url = 1;
+  LogicalType logical_type = 2;
+  uint32 size = 3;
+  // optional, if not defined the auxiliary entity is attached to the entire event instead of a specific
+  // column in the event.
+  string parent_column = 4;
+  repeated uint32 parent_ranks = 5;
+  repeated Int64Column i64_values = 6;
+  repeated DoubleColumn f64_values = 7;
+  repeated StringColumn string_values = 8;
+  repeated BoolColumn bool_values = 9;
+  repeated BytesColumn bytes_values = 10;
+  repeated Int64SummaryColumn i64_summary_values = 11;
+  repeated DoubleSummaryColumn f64_summary_values = 12;
+  // ToDo Histogram
+}
+
+message Int64Column {
+  enum LogicalType {
+    ATTRIBUTE = 0;      // An attribute participates in the uniqueness identification of an event
+    GAUGE = 1;
+    SUM = 2;
+  }
+
+  string name = 1;
+  LogicalType logical_type = 2;
+  string description = 3;
+  string unit = 4;                // see https://unitsofmeasure.org/ucum.html
+  AggregationTemporality aggregation_temporality = 5;
+  bool is_monotonic = 6;
+  repeated int64 values = 7;      // ToDo sfixed64 or int64 ?
+  bytes validity_bitmap = 8;
+}
+
+message DoubleColumn {
+  enum LogicalType {
+    ATTRIBUTE = 0;      // An attribute participates in the uniqueness identification of an event
+    GAUGE = 1;
+    SUM = 2;
+  }
+
+  string name = 1;
+  LogicalType logical_type = 2;
+  string description = 3;
+  string unit = 4;                // see https://unitsofmeasure.org/ucum.html
+  AggregationTemporality aggregation_temporality = 5;
+  bool is_monotonic = 6;
+  repeated double values = 7;
+  bytes validity_bitmap = 8;
+}
+
+message Int64SummaryColumn {
+  string name = 1;
+  string description = 2;
+  string unit = 3;                // see https://unitsofmeasure.org/ucum.html
+  AggregationTemporality aggregation_temporality = 4;
+  repeated int64 min_values = 5;
+  repeated int64 max_values = 6;
+  repeated int64 count_values = 7;
+  repeated int64 sum_values = 8;
+  bytes validity_bitmap = 9;
+}
+
+message DoubleSummaryColumn {
+  string name = 1;
+  string description = 2;
+  string unit = 3;                // see https://unitsofmeasure.org/ucum.html
+  AggregationTemporality aggregation_temporality = 4;
+  repeated double min_values = 5;
+  repeated double max_values = 6;
+  repeated double count_values = 7;
+  repeated double sum_values = 8;
+  bytes validity_bitmap = 9;
+}
+
+message StringColumn {
+  enum LogicalType {
+    ATTRIBUTE = 0;      // An attribute participates in the uniqueness identification of an event
+    UUID = 1;
+  }
+
+  string name = 1;
+  LogicalType logical_type = 2;
+  string description = 3;
+  repeated string values = 4;
+  bytes validity_bitmap = 5;
+}
+
+message BoolColumn {
+  enum LogicalType {
+    ATTRIBUTE = 0;      // An attribute participates in the uniqueness identification of an event
+  }
+
+  string name = 1;
+  LogicalType logical_type = 2;
+  string description = 3;
+  repeated bool values = 4;
+  bytes validity_bitmap = 5;
+}
+
+message BytesColumn {
+  enum LogicalType {
+    ATTRIBUTE = 0;      // An attribute participates in the uniqueness identification of an event
+    GAUGE = 1;
+    SUM = 2;
+    UUID = 3;
+    SPAN_ID = 4;
+    TRACE_ID = 5;
+  }
+
+  enum Encoding {
+    NONE = 0;
+    DELTA = 1;
+    DOUBLE_DELTA = 2;
+  }
+
+  string name = 1;
+  LogicalType logical_type = 2;
+  string description = 3;
+  Encoding encoding = 4;
+  repeated bytes values = 5;
+  bytes validity_bitmap = 6;
+}
+
+
+// AggregationTemporality defines how a metric aggregator reports aggregated
+// values. It describes how those values relate to the time interval over
+// which they are aggregated.
+enum AggregationTemporality {
+  // UNSPECIFIED is the default AggregationTemporality, it MUST not be used.
+  AGGREGATION_TEMPORALITY_UNSPECIFIED = 0;
+
+  // DELTA is an AggregationTemporality for a metric aggregator which reports
+  // changes since last report time. Successive events contain aggregation of
+  // values from continuous and non-overlapping intervals.
+  //
+  // The values for a DELTA metric are based only on the time interval
+  // associated with one measurement cycle. There is no dependency on
+  // previous measurements like is the case for CUMULATIVE events.
+  //
+  // For example, consider a system measuring the number of requests that
+  // it receives and reports the sum of these requests every second as a
+  // DELTA metric:
+  //
+  //   1. The system starts receiving at time=t_0.
+  //   2. A request is received, the system measures 1 request.
+  //   3. A request is received, the system measures 1 request.
+  //   4. A request is received, the system measures 1 request.
+  //   5. The 1 second collection cycle ends. A metric is exported for the
+  //      number of requests received over the interval of time t_0 to
+  //      t_0+1 with a value of 3.
+  //   6. A request is received, the system measures 1 request.
+  //   7. A request is received, the system measures 1 request.
+  //   8. The 1 second collection cycle ends. A metric is exported for the
+  //      number of requests received over the interval of time t_0+1 to
+  //      t_0+2 with a value of 2.
+  AGGREGATION_TEMPORALITY_DELTA = 1;
+
+  // CUMULATIVE is an AggregationTemporality for a metric aggregator which
+  // reports changes since a fixed start time. This means that current values
+  // of a CUMULATIVE metric depend on all previous measurements since the
+  // start time. Because of this, the sender is required to retain this state
+  // in some form. If this state is lost or invalidated, the CUMULATIVE metric
+  // values MUST be reset and a new fixed start time following the last
+  // reported measurement time sent MUST be used.
+  //
+  // For example, consider a system measuring the number of requests that
+  // it receives and reports the sum of these requests every second as a
+  // CUMULATIVE metric:
+  //
+  //   1. The system starts receiving at time=t_0.
+  //   2. A request is received, the system measures 1 request.
+  //   3. A request is received, the system measures 1 request.
+  //   4. A request is received, the system measures 1 request.
+  //   5. The 1 second collection cycle ends. A metric is exported for the
+  //      number of requests received over the interval of time t_0 to
+  //      t_0+1 with a value of 3.
+  //   6. A request is received, the system measures 1 request.
+  //   7. A request is received, the system measures 1 request.
+  //   8. The 1 second collection cycle ends. A metric is exported for the
+  //      number of requests received over the interval of time t_0 to
+  //      t_0+2 with a value of 5.
+  //   9. The system experiences a fault and loses state.
+  //   10. The system recovers and resumes receiving at time=t_1.
+  //   11. A request is received, the system measures 1 request.
+  //   12. The 1 second collection cycle ends. A metric is exported for the
+  //      number of requests received over the interval of time t_1 to
+  //      t_0+1 with a value of 1.
+  //
+  // Note: Even though, when reporting changes since last report time, using
+  // CUMULATIVE is valid, it is not recommended. This may cause problems for
+  // systems that do not use start_time to determine when the aggregation
+  // value was reset (e.g. Prometheus).
+  AGGREGATION_TEMPORALITY_CUMULATIVE = 2;
+}

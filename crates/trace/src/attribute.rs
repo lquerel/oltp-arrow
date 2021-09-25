@@ -1,8 +1,8 @@
 use serde_json::Value;
-use common::{Attributes, Span};
+use common::{Attributes};
 use std::collections::HashMap;
 use std::sync::Arc;
-use arrow::datatypes::{Schema, Field, DataType};
+use arrow::datatypes::{Field, DataType};
 use crate::arrow::{FieldType, EntitySchema};
 use arrow::array::{ArrayRef, UInt64Builder, Int64Builder, Float64Builder, StringBuilder, BooleanBuilder};
 
