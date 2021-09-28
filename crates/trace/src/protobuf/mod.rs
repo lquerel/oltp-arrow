@@ -9,8 +9,9 @@ use oltp::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
 use oltp::opentelemetry::proto::trace;
 use oltp::opentelemetry::proto::trace::v1::span::{Event, Link};
 use oltp::opentelemetry::proto::trace::v1::{InstrumentationLibrarySpans, ResourceSpans};
+use crate::BenchmarkResult;
 
-pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
+pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<Vec<u8>, EncodeError> {
     let start = Instant::now();
 
     let resource_spans = ResourceSpans {
@@ -71,26 +72,23 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
 
     // dbg!(&resource_spans);
     let elapse_time = Instant::now() - start;
-    println!("Protocol buffer creation: {}ms", elapse_time.as_millis());
+    bench_result.total_buffer_creation_ms += elapse_time.as_millis();
 
     let start = Instant::now();
     let mut buf: Vec<u8> = Vec::new();
     resource_spans.encode(&mut buf)?;
     let elapse_time = Instant::now() - start;
-    println!(
-        "Protocol buffer serialization: {}ms",
-        elapse_time.as_millis()
-    );
+    bench_result.total_buffer_serialization_ms += elapse_time.as_millis();
 
     Ok(buf)
 }
 
-pub fn deserialize(buf: Vec<u8>) {
+pub fn deserialize(buf: Vec<u8>, bench_result: &mut BenchmarkResult) {
     let start = Instant::now();
     let resource_spans = ResourceSpans::decode(bytes::Bytes::from(buf)).unwrap();
     assert_eq!(resource_spans.instrumentation_library_spans.len(), 1);
     let elapse_time = Instant::now() - start;
-    println!("Protobuf deserialize {}ms", elapse_time.as_millis());
+    bench_result.total_buffer_deserialization_ms += elapse_time.as_millis();
 }
 
 fn attributes(attributes: Option<&Attributes>) -> Vec<KeyValue> {

@@ -26,13 +26,37 @@ struct Opt {
     files: Vec<PathBuf>,
 }
 
-pub struct BenchmarkResult {}
+#[derive(Debug)]
+pub struct BenchmarkResult {
+    file: String,
+    batch_count: usize,
+    row_count: usize,
+    total_infer_schema_ms: u128,
+    total_buffer_creation_ms: u128,
+    total_buffer_size: usize,
+    total_buffer_serialization_ms: u128,
+    total_buffer_compression_ms: u128,
+    total_compressed_buffer_size: usize,
+    total_buffer_decompression_ms: u128,
+    total_buffer_deserialization_ms: u128,
+}
+
+#[derive(Debug)]
+pub struct ArrowVsProto {
+    arrow: BenchmarkResult,
+    proto: BenchmarkResult
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::parse();
+    let mut bench_results = vec![];
 
     opt.files.iter().for_each(|file| {
-        println!("Processing file '{}'", file.as_path().display().to_string());
+        let filename = file.as_path().display().to_string();
+        let mut arrow_result = BenchmarkResult::new(&filename);
+        let mut proto_result = BenchmarkResult::new(&filename);
+
+        print!("Processing file '{}'...", filename);
         let reader = BufReader::new(File::open(file).unwrap());
 
         serde_json::Deserializer::from_reader(reader)
@@ -42,21 +66,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .for_each(|chunk| {
                 let spans: Vec<_> = chunk.collect();
-                println!("Processing batch of {} spans", spans.len());
-                println!("Arrow");
-                let result = bench_arrow(&spans);
+
+                let result = bench_arrow(&spans, &mut arrow_result);
                 if result.is_err() {
-                    println!("{:?}", result);
-                }
-                println!("Protobuf");
-                let result = bench_protobuf(&spans);
-                if result.is_err() {
-                    println!("{:?}", result);
+                    panic!("{:?}", result);
+                } else {
+                    arrow_result.batch_count += 1;
+                    arrow_result.row_count += spans.len();
                 }
 
-                println!("====================================================================================================")
+                let result = bench_protobuf(&spans, &mut proto_result);
+                if result.is_err() {
+                    panic!("{:?}", result);
+                } else {
+                    proto_result.batch_count += 1;
+                    proto_result.row_count += spans.len();
+                }
             });
+
+        bench_results.push(ArrowVsProto {
+            arrow: arrow_result,
+            proto: proto_result
+        });
+
+        println!("DONE.");
     });
+
+    dbg!(bench_results);
 
     if opt.files.is_empty() {
         dump_sample_data();
@@ -65,49 +101,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn bench_arrow(spans: &[Span]) -> Result<(), Box<dyn std::error::Error>> {
-    let buf = arrow::serialize(spans)?;
-    println!("\tuncompressed size: {}", buf.len());
+impl BenchmarkResult {
+    pub fn new(filename: &str) -> Self {
+        Self {
+            file: filename.into(),
+            batch_count: 0,
+            row_count: 0,
+            total_infer_schema_ms: 0,
+            total_buffer_creation_ms: 0,
+            total_buffer_size: 0,
+            total_buffer_serialization_ms: 0,
+            total_buffer_compression_ms: 0,
+            total_compressed_buffer_size: 0,
+            total_buffer_decompression_ms: 0,
+            total_buffer_deserialization_ms: 0
+        }
+    }
+}
+
+fn bench_arrow(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<(), Box<dyn std::error::Error>> {
+    let buf = arrow::serialize(spans, bench_result)?;
+    bench_result.total_buffer_size += buf.len();
     let start = Instant::now();
     let compressed_buf = compress_prepend_size(&buf);
     let elapse_time = Instant::now() - start;
-    println!(
-        "\tcompressed size: {} ({}ms)",
-        compressed_buf.len(),
-        elapse_time.as_millis()
-    );
+    bench_result.total_compressed_buffer_size += compressed_buf.len();
+    bench_result.total_buffer_compression_ms += elapse_time.as_millis();
     let start = Instant::now();
     let buf = decompress_size_prepended(&compressed_buf).unwrap();
     let elapse_time = Instant::now() - start;
-    println!(
-        "\tuncompressed size: {} ({}ms)",
-        buf.len(),
-        elapse_time.as_millis()
-    );
-    arrow::deserialize(buf);
+    bench_result.total_buffer_decompression_ms += elapse_time.as_millis();
+    arrow::deserialize(buf, bench_result);
     Ok(())
 }
 
-fn bench_protobuf(spans: &[Span]) -> Result<(), Box<dyn std::error::Error>> {
-    let buf = protobuf::serialize(spans)?;
-    println!("\tuncompressed size: {}", buf.len());
+fn bench_protobuf(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<(), Box<dyn std::error::Error>> {
+    let buf = protobuf::serialize(spans, bench_result)?;
+    bench_result.total_buffer_size += buf.len();
     let start = Instant::now();
     let compressed_buf = compress_prepend_size(&buf);
     let elapse_time = Instant::now() - start;
-    println!(
-        "\tcompressed size: {} ({}ms)",
-        compressed_buf.len(),
-        elapse_time.as_millis()
-    );
+    bench_result.total_compressed_buffer_size += compressed_buf.len();
+    bench_result.total_buffer_compression_ms += elapse_time.as_millis();
     let start = Instant::now();
     let buf = decompress_size_prepended(&compressed_buf).unwrap();
     let elapse_time = Instant::now() - start;
-    println!(
-        "\tuncompressed size: {} ({}ms)",
-        buf.len(),
-        elapse_time.as_millis()
-    );
-    protobuf::deserialize(buf);
+    bench_result.total_buffer_decompression_ms += elapse_time.as_millis();
+    protobuf::deserialize(buf, bench_result);
     Ok(())
 }
 

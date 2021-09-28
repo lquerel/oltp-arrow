@@ -16,6 +16,7 @@ use span::serialize_spans;
 use crate::arrow::event::infer_event_schema;
 use crate::arrow::link::infer_link_schema;
 use crate::arrow::span::infer_span_schema;
+use crate::BenchmarkResult;
 
 mod attribute;
 mod event;
@@ -44,17 +45,14 @@ pub struct EntitySchema {
     pub attribute_fields: HashMap<String, FieldInfo, RandomXxHashBuilder64>,
 }
 
-pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let start = Instant::now();
     let (event_schema, event_count) = infer_event_schema(spans);
     let (link_schema, link_count) = infer_link_schema(spans);
     let gen_id_column = (event_count + link_count) > 0;
     let span_schema = infer_span_schema(spans, gen_id_column);
     let elapse_time = Instant::now() - start;
-    println!(
-        "Arrow buffer schema inference: {}ms",
-        elapse_time.as_millis()
-    );
+    bench_result.total_infer_schema_ms += elapse_time.as_millis();
 
     let start = Instant::now();
     let events_buf = serialize_events(event_schema, spans)?;
@@ -77,18 +75,21 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, Box<dyn std::error::Error>> 
     };
 
     let elapse_time = Instant::now() - start;
-    println!("Arrow buffer creation: {}ms", elapse_time.as_millis());
+    bench_result.total_buffer_creation_ms += elapse_time.as_millis();
 
     let start = Instant::now();
     let mut buf: Vec<u8> = Vec::new();
     resource_events.encode(&mut buf)?;
     let elapse_time = Instant::now() - start;
-    println!("Arrow buffer serialization: {}ms", elapse_time.as_millis());
+    bench_result.total_buffer_serialization_ms += elapse_time.as_millis();
 
     Ok(buf)
 }
 
-pub fn deserialize(buf: Vec<u8>) {
+pub fn deserialize(
+    buf: Vec<u8>,
+    bench_result: &mut BenchmarkResult
+) {
     let start = Instant::now();
     let resource_events = ResourceEvents::decode(bytes::Bytes::from(buf)).unwrap();
     let mut reader =
@@ -107,7 +108,7 @@ pub fn deserialize(buf: Vec<u8>) {
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
     let elapse_time = Instant::now() - start;
-    println!("Arrow deserialize {}ms", elapse_time.as_millis());
+    bench_result.total_buffer_deserialization_ms += elapse_time.as_millis();
 }
 
 impl FieldInfo {
