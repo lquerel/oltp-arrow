@@ -14,7 +14,6 @@ use twox_hash::RandomXxHashBuilder64;
 use common::Attributes;
 
 use crate::arrow::{EntitySchema, FieldInfo, FieldType};
-use arrow::array::StringArray;
 
 pub fn infer_attribute_types(
     attributes: &Attributes,
@@ -176,27 +175,24 @@ pub fn add_attribute_columns(
                 if attribute.1.is_dictionary() {
                     let min_num_bits = min_num_bits_to_represent(attribute.1.dictionary_values.len());
                     if min_num_bits <= 8 {
-                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
-                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
+                        let mut builder = StringDictionaryBuilder::new(
                             PrimitiveBuilder::<UInt8Type>::new(row_count),
-                            &dictionary_values,
-                        ).unwrap();
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else if min_num_bits <= 16 {
-                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
-                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
+                        let mut builder = StringDictionaryBuilder::new(
                             PrimitiveBuilder::<UInt16Type>::new(row_count),
-                            &dictionary_values,
-                        ).unwrap();
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else {
-                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
-                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
+                        let mut builder = StringDictionaryBuilder::new(
                             PrimitiveBuilder::<UInt32Type>::new(row_count),
-                            &dictionary_values,
-                        ).unwrap();
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     };

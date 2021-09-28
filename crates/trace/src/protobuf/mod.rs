@@ -4,11 +4,11 @@ use prost::{EncodeError, Message};
 use serde_json::Value;
 
 use common::{Attributes, Span};
-use oltp::opentelemetry::proto::common::v1::any_value;
 use oltp::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
+use oltp::opentelemetry::proto::common::v1::any_value;
 use oltp::opentelemetry::proto::trace;
-use oltp::opentelemetry::proto::trace::v1::span::{Event, Link};
 use oltp::opentelemetry::proto::trace::v1::{InstrumentationLibrarySpans, ResourceSpans};
+use oltp::opentelemetry::proto::trace::v1::span::{Event, Link};
 
 pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
     let start = Instant::now();

@@ -13,8 +13,8 @@ use twox_hash::RandomXxHashBuilder64;
 
 use common::Span;
 
-use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
 use crate::arrow::{EntitySchema, FieldInfo};
+use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
 
 pub fn serialize_spans(
     span_schema: EntitySchema,
