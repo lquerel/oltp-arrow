@@ -236,7 +236,7 @@ pub fn add_attribute_columns(
 }
 
 fn build_dictionary<K>(
-    attributes: &Vec<Option<&Attributes>>,
+    attributes: &[Option<&Attributes>],
     attribute: (&String, &FieldInfo),
     builder: &mut StringDictionaryBuilder<K>,
 ) where
