@@ -1,14 +1,17 @@
-use crate::arrow::{EntitySchema, FieldInfo};
-use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use arrow::array::{ArrayRef, StringArray, StringBuilder, UInt32Array, UInt32Builder};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
-use common::{Link, Span};
-use std::collections::HashMap;
-use std::sync::Arc;
 use twox_hash::RandomXxHashBuilder64;
+
+use common::{Link, Span};
+
+use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use crate::arrow::{EntitySchema, FieldInfo};
 
 pub fn serialize_links(link_schema: EntitySchema, spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
     let links: Vec<(usize, &Link)> = spans
@@ -69,7 +72,7 @@ pub fn serialize_links(link_schema: EntitySchema, spans: &[Span]) -> Result<Vec<
     writer.into_inner()
 }
 
-pub fn infer_link_schema(spans: &[Span]) -> EntitySchema {
+pub fn infer_link_schema(spans: &[Span]) -> (EntitySchema, usize) {
     let mut fields = vec![
         Field::new("id", DataType::UInt32, false),
         Field::new("trace_id", DataType::Utf8, false),
@@ -79,19 +82,21 @@ pub fn infer_link_schema(spans: &[Span]) -> EntitySchema {
     ];
 
     let mut attribute_types = HashMap::<String, FieldInfo, RandomXxHashBuilder64>::default();
+    let mut link_count = 0;
 
     for span in spans {
         if let Some(links) = &span.links {
             for link in links {
                 infer_attribute_types(&link.attributes, &mut attribute_types);
+                link_count += 1;
             }
         }
     }
 
     add_attribute_fields(&attribute_types, &mut fields);
 
-    EntitySchema {
+    (EntitySchema {
         schema: Arc::new(Schema::new(fields)),
         attribute_fields: attribute_types,
-    }
+    }, link_count)
 }

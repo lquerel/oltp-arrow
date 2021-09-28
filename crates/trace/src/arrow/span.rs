@@ -1,17 +1,26 @@
-use crate::arrow::{EntitySchema, FieldInfo};
-use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
-use arrow::array::{ArrayRef, StringArray, BinaryArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, BinaryBuilder};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use arrow::array::{
+    ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder,
+    UInt64Array, UInt64Builder,
+};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use twox_hash::RandomXxHashBuilder64;
+
 use common::Span;
-use std::collections::HashMap;
-use std::sync::Arc;
-use twox_hash::{RandomXxHashBuilder64};
 
+use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use crate::arrow::{EntitySchema, FieldInfo};
 
-pub fn serialize_spans(span_schema: EntitySchema, spans: &[Span], gen_id_column: bool) -> Result<Vec<u8>, ArrowError> {
+pub fn serialize_spans(
+    span_schema: EntitySchema,
+    spans: &[Span],
+    gen_id_column: bool,
+) -> Result<Vec<u8>, ArrowError> {
     let mut end_time_unix_nano = UInt64Builder::new(spans.len());
     let mut trace_state = StringBuilder::new(spans.len());
     let mut parent_span_id = BinaryBuilder::new(spans.len());
@@ -63,10 +72,16 @@ pub fn serialize_spans(span_schema: EntitySchema, spans: &[Span], gen_id_column:
         )),
         Arc::new(end_time_unix_nano.finish()),
         Arc::new(BinaryArray::from(
-            spans.iter().map(|span| span.trace_id.as_bytes()).collect::<Vec<&[u8]>>()
+            spans
+                .iter()
+                .map(|span| span.trace_id.as_bytes())
+                .collect::<Vec<&[u8]>>(),
         )),
         Arc::new(BinaryArray::from(
-            spans.iter().map(|span| span.span_id.as_bytes()).collect::<Vec<&[u8]>>()
+            spans
+                .iter()
+                .map(|span| span.span_id.as_bytes())
+                .collect::<Vec<&[u8]>>(),
         )),
         Arc::new(trace_state.finish()),
         Arc::new(parent_span_id.finish()),
@@ -80,7 +95,9 @@ pub fn serialize_spans(span_schema: EntitySchema, spans: &[Span], gen_id_column:
     ];
 
     if gen_id_column {
-        columns.push(Arc::new(UInt32Array::from_iter_values(0..spans.len() as u32)));
+        columns.push(Arc::new(UInt32Array::from_iter_values(
+            0..spans.len() as u32,
+        )));
     }
 
     add_attribute_columns(
@@ -124,7 +141,7 @@ pub fn infer_span_schema(spans: &[Span], gen_id_column: bool) -> EntitySchema {
     ];
 
     if gen_id_column {
-        fields.push( Field::new("id", DataType::UInt32, false));
+        fields.push(Field::new("id", DataType::UInt32, false));
     }
 
     let mut attribute_types: HashMap<String, FieldInfo, RandomXxHashBuilder64> = Default::default();

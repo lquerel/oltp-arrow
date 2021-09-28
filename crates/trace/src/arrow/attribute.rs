@@ -1,11 +1,19 @@
-use crate::arrow::{EntitySchema, FieldType, FieldInfo};
-use arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, StringBuilder, UInt64Builder, StringDictionaryBuilder, PrimitiveBuilder};
-use arrow::datatypes::{DataType, Field, UInt32Type, UInt8Type, UInt16Type, ArrowDictionaryKeyType};
-use common::Attributes;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+use arrow::array::{
+    ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, PrimitiveBuilder, StringBuilder,
+    StringDictionaryBuilder, UInt64Builder,
+};
+use arrow::datatypes::{
+    ArrowDictionaryKeyType, DataType, Field, UInt16Type, UInt32Type, UInt8Type,
+};
+use serde_json::Value;
 use twox_hash::RandomXxHashBuilder64;
+
+use common::Attributes;
+
+use crate::arrow::{EntitySchema, FieldInfo, FieldType};
 
 pub fn infer_attribute_types(
     attributes: &Attributes,
@@ -23,7 +31,11 @@ pub fn infer_attribute_types(
                         }
                         field_info.non_null_count += 1;
                     })
-                    .or_insert_with(|| FieldInfo { non_null_count: 1, field_type: FieldType::Bool, cardinality: Default::default() });
+                    .or_insert_with(|| FieldInfo {
+                        non_null_count: 1,
+                        field_type: FieldType::Bool,
+                        cardinality: Default::default(),
+                    });
             }
             Value::Number(number) => {
                 attribute_types
@@ -44,24 +56,43 @@ pub fn infer_attribute_types(
                     })
                     .or_insert_with(|| {
                         if number.is_u64() {
-                            FieldInfo { non_null_count: 1, field_type: FieldType::U64, cardinality: Default::default() }
+                            FieldInfo {
+                                non_null_count: 1,
+                                field_type: FieldType::U64,
+                                cardinality: Default::default(),
+                            }
                         } else if number.is_i64() {
-                            FieldInfo { non_null_count: 1, field_type: FieldType::I64, cardinality: Default::default() }
+                            FieldInfo {
+                                non_null_count: 1,
+                                field_type: FieldType::I64,
+                                cardinality: Default::default(),
+                            }
                         } else {
-                            FieldInfo { non_null_count: 1, field_type: FieldType::F64, cardinality: Default::default() }
+                            FieldInfo {
+                                non_null_count: 1,
+                                field_type: FieldType::F64,
+                                cardinality: Default::default(),
+                            }
                         }
                     });
             }
             Value::String(_) => {
-                attribute_types.entry(kv.0.clone())
+                attribute_types
+                    .entry(kv.0.clone())
                     .and_modify(|field_info| {
-                        field_info.cardinality.insert(kv.1.as_str().unwrap_or("").to_string());
+                        field_info
+                            .cardinality
+                            .insert(kv.1.as_str().unwrap_or("").to_string());
                         field_info.non_null_count += 1;
                     })
                     .or_insert_with(|| {
                         let mut cardinality = HashSet::new();
                         cardinality.insert(kv.1.as_str().unwrap_or("").to_string());
-                        FieldInfo { non_null_count: 1, field_type: FieldType::String, cardinality }
+                        FieldInfo {
+                            non_null_count: 1,
+                            field_type: FieldType::String,
+                            cardinality,
+                        }
                     });
             }
         }
@@ -144,15 +175,24 @@ pub fn add_attribute_columns(
                 if attribute.1.is_dictionary() {
                     let min_num_bits = min_num_bits_to_represent(attribute.1.cardinality.len());
                     if min_num_bits <= 8 {
-                        let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt8Type>::new(row_count), StringBuilder::new(row_count));
+                        let mut builder = StringDictionaryBuilder::new(
+                            PrimitiveBuilder::<UInt8Type>::new(row_count),
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else if min_num_bits <= 16 {
-                        let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt16Type>::new(row_count), StringBuilder::new(row_count));
+                        let mut builder = StringDictionaryBuilder::new(
+                            PrimitiveBuilder::<UInt16Type>::new(row_count),
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else {
-                        let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt32Type>::new(row_count), StringBuilder::new(row_count));
+                        let mut builder = StringDictionaryBuilder::new(
+                            PrimitiveBuilder::<UInt32Type>::new(row_count),
+                            StringBuilder::new(row_count),
+                        );
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     };
@@ -195,11 +235,13 @@ pub fn add_attribute_columns(
     }
 }
 
-fn build_dictionary<K>(attributes: &Vec<Option<&Attributes>>,
-                    attribute: (&String, &FieldInfo),
-                    builder: &mut StringDictionaryBuilder<K>)
-    where
-        K: ArrowDictionaryKeyType {
+fn build_dictionary<K>(
+    attributes: &Vec<Option<&Attributes>>,
+    attribute: (&String, &FieldInfo),
+    builder: &mut StringDictionaryBuilder<K>,
+) where
+    K: ArrowDictionaryKeyType,
+{
     attributes.iter().for_each(|attrs| match attrs {
         None => builder.append_null().unwrap(),
         Some(attributes) => match attributes.get(attribute.0) {
@@ -215,7 +257,10 @@ fn build_dictionary<K>(attributes: &Vec<Option<&Attributes>>,
     });
 }
 
-pub fn add_attribute_fields(attribute_types: &HashMap<String, FieldInfo, RandomXxHashBuilder64>, fields: &mut Vec<Field>) {
+pub fn add_attribute_fields(
+    attribute_types: &HashMap<String, FieldInfo, RandomXxHashBuilder64>,
+    fields: &mut Vec<Field>,
+) {
     for attribute_info in attribute_types.iter() {
         match attribute_info.1.field_type {
             FieldType::U64 => {
@@ -241,23 +286,33 @@ pub fn add_attribute_fields(attribute_types: &HashMap<String, FieldInfo, RandomX
             }
             FieldType::String => {
                 if attribute_info.1.is_dictionary() {
-                    let min_num_bits = min_num_bits_to_represent(attribute_info.1.cardinality.len());
+                    let min_num_bits =
+                        min_num_bits_to_represent(attribute_info.1.cardinality.len());
                     if min_num_bits <= 8 {
                         fields.push(Field::new(
                             &format!("attributes_{}", attribute_info.0),
-                            DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8)),
+                            DataType::Dictionary(
+                                Box::new(DataType::UInt8),
+                                Box::new(DataType::Utf8),
+                            ),
                             true,
                         ));
                     } else if min_num_bits <= 16 {
                         fields.push(Field::new(
                             &format!("attributes_{}", attribute_info.0),
-                            DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
+                            DataType::Dictionary(
+                                Box::new(DataType::UInt16),
+                                Box::new(DataType::Utf8),
+                            ),
                             true,
                         ));
                     } else {
                         fields.push(Field::new(
                             &format!("attributes_{}", attribute_info.0),
-                            DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Utf8)),
+                            DataType::Dictionary(
+                                Box::new(DataType::UInt32),
+                                Box::new(DataType::Utf8),
+                            ),
                             true,
                         ));
                     };
@@ -280,7 +335,9 @@ pub fn add_attribute_fields(attribute_types: &HashMap<String, FieldInfo, RandomX
     }
 }
 
-const fn num_bits<T>() -> usize { std::mem::size_of::<T>() * 8 }
+const fn num_bits<T>() -> usize {
+    std::mem::size_of::<T>() * 8
+}
 
 fn min_num_bits_to_represent(x: usize) -> u32 {
     assert!(x > 0);
