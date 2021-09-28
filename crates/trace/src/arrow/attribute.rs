@@ -173,7 +173,8 @@ pub fn add_attribute_columns(
             }
             FieldType::String => {
                 if attribute.1.is_dictionary() {
-                    let min_num_bits = min_num_bits_to_represent(attribute.1.dictionary_values.len());
+                    let min_num_bits =
+                        min_num_bits_to_represent(attribute.1.dictionary_values.len());
                     if min_num_bits <= 8 {
                         let mut builder = StringDictionaryBuilder::new(
                             PrimitiveBuilder::<UInt8Type>::new(row_count),

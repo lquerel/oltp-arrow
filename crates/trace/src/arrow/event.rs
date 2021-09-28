@@ -10,8 +10,8 @@ use twox_hash::RandomXxHashBuilder64;
 
 use common::{Event, Span};
 
-use crate::arrow::{EntitySchema, FieldInfo};
 use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use crate::arrow::{EntitySchema, FieldInfo};
 
 pub fn serialize_events(event_schema: EntitySchema, spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
     let events: Vec<(usize, &Event)> = spans
@@ -88,8 +88,11 @@ pub fn infer_event_schema(spans: &[Span]) -> (EntitySchema, usize) {
 
     add_attribute_fields(&attribute_types, &mut fields);
 
-    (EntitySchema {
-        schema: Arc::new(Schema::new(fields)),
-        attribute_fields: attribute_types,
-    }, event_count)
+    (
+        EntitySchema {
+            schema: Arc::new(Schema::new(fields)),
+            attribute_fields: attribute_types,
+        },
+        event_count,
+    )
 }

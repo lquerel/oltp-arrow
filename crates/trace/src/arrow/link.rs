@@ -10,8 +10,8 @@ use twox_hash::RandomXxHashBuilder64;
 
 use common::{Link, Span};
 
-use crate::arrow::{EntitySchema, FieldInfo};
 use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_attribute_types};
+use crate::arrow::{EntitySchema, FieldInfo};
 
 pub fn serialize_links(link_schema: EntitySchema, spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
     let links: Vec<(usize, &Link)> = spans
@@ -95,8 +95,11 @@ pub fn infer_link_schema(spans: &[Span]) -> (EntitySchema, usize) {
 
     add_attribute_fields(&attribute_types, &mut fields);
 
-    (EntitySchema {
-        schema: Arc::new(Schema::new(fields)),
-        attribute_fields: attribute_types,
-    }, link_count)
+    (
+        EntitySchema {
+            schema: Arc::new(Schema::new(fields)),
+            attribute_fields: attribute_types,
+        },
+        link_count,
+    )
 }

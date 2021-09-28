@@ -51,7 +51,10 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, Box<dyn std::error::Error>> 
     let gen_id_column = (event_count + link_count) > 0;
     let span_schema = infer_span_schema(spans, gen_id_column);
     let elapse_time = Instant::now() - start;
-    println!("Arrow buffer schema inference: {}ms", elapse_time.as_millis());
+    println!(
+        "Arrow buffer schema inference: {}ms",
+        elapse_time.as_millis()
+    );
 
     let start = Instant::now();
     let events_buf = serialize_events(event_schema, spans)?;
@@ -59,7 +62,7 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, Box<dyn std::error::Error>> 
     let spans_buf = serialize_spans(
         span_schema,
         spans,
-        events_buf.is_empty() && links_buf.is_empty(),
+        gen_id_column,
     )?;
 
     let resource_events = ResourceEvents {

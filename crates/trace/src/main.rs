@@ -7,9 +7,9 @@ use clap::{Clap, ValueHint};
 use itertools::Itertools;
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
-use common::{Span, Event, Link};
-use std::collections::HashMap;
+use common::{Event, Link, Span};
 use serde_json::Value;
+use std::collections::HashMap;
 
 mod arrow;
 mod protobuf;
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn bench_arrow(spans: &[Span]) -> Result<(), Box<dyn std::error::Error>> {
-    let buf = arrow::serialize(&spans)?;
+    let buf = arrow::serialize(spans)?;
     println!("\tuncompressed size: {}", buf.len());
     let start = Instant::now();
     let compressed_buf = compress_prepend_size(&buf);
@@ -89,7 +89,7 @@ fn bench_arrow(spans: &[Span]) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn bench_protobuf(spans: &[Span]) -> Result<(), Box<dyn std::error::Error>> {
-    let buf = protobuf::serialize(&spans)?;
+    let buf = protobuf::serialize(spans)?;
     println!("\tuncompressed size: {}", buf.len());
     let start = Instant::now();
     let compressed_buf = compress_prepend_size(&buf);
@@ -128,24 +128,20 @@ fn dump_sample_data() {
         end_time_unix_nano: Some(1626371667388918010),
         attributes: Some(attributes.clone()),
         dropped_attributes_count: Some(0),
-        events: Some(vec![
-            Event {
-                time_unix_nano: 1626371667388918000,
-                name: "<event_name>".to_string(),
-                attributes: attributes.clone(),
-                dropped_attributes_count: Some(0)
-            }
-        ]),
+        events: Some(vec![Event {
+            time_unix_nano: 1626371667388918000,
+            name: "<event_name>".to_string(),
+            attributes: attributes.clone(),
+            dropped_attributes_count: Some(0),
+        }]),
         dropped_events_count: Some(0),
-        links: Some(vec![
-            Link {
-                trace_id: "<id>".to_string(),
-                span_id: "<id>".to_string(),
-                trace_state: Some("<state>".into()),
-                attributes,
-                dropped_attributes_count: Some(0)
-            }
-        ]),
+        links: Some(vec![Link {
+            trace_id: "<id>".to_string(),
+            span_id: "<id>".to_string(),
+            trace_state: Some("<state>".into()),
+            attributes,
+            dropped_attributes_count: Some(0),
+        }]),
         dropped_links_count: Some(0),
     };
 

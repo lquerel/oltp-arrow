@@ -4,11 +4,11 @@ use prost::{EncodeError, Message};
 use serde_json::Value;
 
 use common::{Attributes, Span};
-use oltp::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
 use oltp::opentelemetry::proto::common::v1::any_value;
+use oltp::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
 use oltp::opentelemetry::proto::trace;
-use oltp::opentelemetry::proto::trace::v1::{InstrumentationLibrarySpans, ResourceSpans};
 use oltp::opentelemetry::proto::trace::v1::span::{Event, Link};
+use oltp::opentelemetry::proto::trace::v1::{InstrumentationLibrarySpans, ResourceSpans};
 
 pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
     let start = Instant::now();
@@ -22,11 +22,11 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
                 .map(|span| trace::v1::Span {
                     trace_id: span.trace_id.clone().into_bytes(),
                     span_id: span.span_id.clone().into_bytes(),
-                    trace_state: span.trace_state.clone().unwrap_or("".into()),
+                    trace_state: span.trace_state.clone().unwrap_or_else(|| "".into()),
                     parent_span_id: span
                         .parent_span_id
                         .clone()
-                        .unwrap_or("".into())
+                        .unwrap_or_else(|| "".into())
                         .into_bytes(),
                     name: span.name.clone(),
                     kind: span.kind.unwrap_or(0),
@@ -55,7 +55,7 @@ pub fn serialize(spans: &[Span]) -> Result<Vec<u8>, EncodeError> {
                         .map(|link| Link {
                             trace_id: link.trace_id.clone().into_bytes(),
                             span_id: link.span_id.clone().into_bytes(),
-                            trace_state: link.trace_state.clone().unwrap_or("".into()),
+                            trace_state: link.trace_state.clone().unwrap_or_else(|| "".into()),
                             attributes: attributes(Some(&link.attributes)),
                             dropped_attributes_count: link.dropped_attributes_count.unwrap_or(0),
                         })
