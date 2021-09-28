@@ -14,6 +14,7 @@ use twox_hash::RandomXxHashBuilder64;
 use common::Attributes;
 
 use crate::arrow::{EntitySchema, FieldInfo, FieldType};
+use arrow::array::StringArray;
 
 pub fn infer_attribute_types(
     attributes: &Attributes,
@@ -34,7 +35,7 @@ pub fn infer_attribute_types(
                     .or_insert_with(|| FieldInfo {
                         non_null_count: 1,
                         field_type: FieldType::Bool,
-                        cardinality: Default::default(),
+                        dictionary_values: Default::default(),
                     });
             }
             Value::Number(number) => {
@@ -59,19 +60,19 @@ pub fn infer_attribute_types(
                             FieldInfo {
                                 non_null_count: 1,
                                 field_type: FieldType::U64,
-                                cardinality: Default::default(),
+                                dictionary_values: Default::default(),
                             }
                         } else if number.is_i64() {
                             FieldInfo {
                                 non_null_count: 1,
                                 field_type: FieldType::I64,
-                                cardinality: Default::default(),
+                                dictionary_values: Default::default(),
                             }
                         } else {
                             FieldInfo {
                                 non_null_count: 1,
                                 field_type: FieldType::F64,
-                                cardinality: Default::default(),
+                                dictionary_values: Default::default(),
                             }
                         }
                     });
@@ -81,7 +82,7 @@ pub fn infer_attribute_types(
                     .entry(kv.0.clone())
                     .and_modify(|field_info| {
                         field_info
-                            .cardinality
+                            .dictionary_values
                             .insert(kv.1.as_str().unwrap_or("").to_string());
                         field_info.non_null_count += 1;
                     })
@@ -91,7 +92,7 @@ pub fn infer_attribute_types(
                         FieldInfo {
                             non_null_count: 1,
                             field_type: FieldType::String,
-                            cardinality,
+                            dictionary_values: cardinality,
                         }
                     });
             }
@@ -173,26 +174,29 @@ pub fn add_attribute_columns(
             }
             FieldType::String => {
                 if attribute.1.is_dictionary() {
-                    let min_num_bits = min_num_bits_to_represent(attribute.1.cardinality.len());
+                    let min_num_bits = min_num_bits_to_represent(attribute.1.dictionary_values.len());
                     if min_num_bits <= 8 {
-                        let mut builder = StringDictionaryBuilder::new(
+                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
+                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
                             PrimitiveBuilder::<UInt8Type>::new(row_count),
-                            StringBuilder::new(row_count),
-                        );
+                            &dictionary_values,
+                        ).unwrap();
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else if min_num_bits <= 16 {
-                        let mut builder = StringDictionaryBuilder::new(
+                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
+                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
                             PrimitiveBuilder::<UInt16Type>::new(row_count),
-                            StringBuilder::new(row_count),
-                        );
+                            &dictionary_values,
+                        ).unwrap();
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     } else {
-                        let mut builder = StringDictionaryBuilder::new(
+                        let dictionary_values = StringArray::from_iter_values(attribute.1.dictionary_values.iter());
+                        let mut builder = StringDictionaryBuilder::new_with_dictionary(
                             PrimitiveBuilder::<UInt32Type>::new(row_count),
-                            StringBuilder::new(row_count),
-                        );
+                            &dictionary_values,
+                        ).unwrap();
                         build_dictionary(&attributes, attribute, &mut builder);
                         columns.push(Arc::new(builder.finish()));
                     };
@@ -287,7 +291,7 @@ pub fn add_attribute_fields(
             FieldType::String => {
                 if attribute_info.1.is_dictionary() {
                     let min_num_bits =
-                        min_num_bits_to_represent(attribute_info.1.cardinality.len());
+                        min_num_bits_to_represent(attribute_info.1.dictionary_values.len());
                     if min_num_bits <= 8 {
                         fields.push(Field::new(
                             &format!("attributes_{}", attribute_info.0),

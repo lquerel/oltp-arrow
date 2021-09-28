@@ -26,7 +26,7 @@ mod span;
 pub struct FieldInfo {
     non_null_count: usize,
     field_type: FieldType,
-    cardinality: HashSet<String>,
+    dictionary_values: HashSet<String>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -109,6 +109,6 @@ pub fn deserialize(buf: Vec<u8>) {
 
 impl FieldInfo {
     pub fn is_dictionary(&self) -> bool {
-        (self.cardinality.len() as f64 / self.non_null_count as f64) < 0.4
+        (self.dictionary_values.len() as f64 / self.non_null_count as f64) < 0.4
     }
 }
