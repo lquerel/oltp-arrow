@@ -239,7 +239,7 @@ fn render_benchmark_results(results: Vec<ArrowVsProto>) {
   total buffer decompression (ms)
   total buffer deserialization (ms)"#;
     let mut table = Table::new();
-    table.set_header(vec!["File/Metrics", "Protobuf", "Arrow", "Analysis"]);
+    table.set_header(vec!["File/Metrics", "Protobuf\nreference implementation", "Arrow\nschema inference\n+ row-oriented insert", "Arrow\ncolumnar-oriented insert"]);
 
     for result in results {
         let mut columns = vec![];
@@ -254,17 +254,3 @@ fn render_benchmark_results(results: Vec<ArrowVsProto>) {
 
     println!("{}", table);
 }
-
-/*
-            batch_count: 0,
-            row_count: 0,
-            total_infer_schema_ms: 0,
-            total_buffer_creation_ms: 0,
-            total_buffer_size: 0,
-            total_buffer_serialization_ms: 0,
-            total_buffer_compression_ms: 0,
-            total_compressed_buffer_size: 0,
-            total_buffer_decompression_ms: 0,
-            total_buffer_deserialization_ms: 0
-
- */
