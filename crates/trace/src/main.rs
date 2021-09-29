@@ -32,14 +32,14 @@ struct Opt {
 pub struct BenchmarkResult {
     batch_count: usize,
     row_count: usize,
-    total_infer_schema_ms: u128,
-    total_buffer_creation_ms: u128,
+    total_infer_schema_ns: u128,
+    total_buffer_creation_ns: u128,
     total_buffer_size: usize,
-    total_buffer_serialization_ms: u128,
-    total_buffer_compression_ms: u128,
+    total_buffer_serialization_ns: u128,
+    total_buffer_compression_ns: u128,
     total_compressed_buffer_size: usize,
-    total_buffer_decompression_ms: u128,
-    total_buffer_deserialization_ms: u128,
+    total_buffer_decompression_ns: u128,
+    total_buffer_deserialization_ns: u128,
 }
 
 #[derive(Debug)]
@@ -109,31 +109,31 @@ impl BenchmarkResult {
         Self {
             batch_count: 0,
             row_count: 0,
-            total_infer_schema_ms: 0,
-            total_buffer_creation_ms: 0,
+            total_infer_schema_ns: 0,
+            total_buffer_creation_ns: 0,
             total_buffer_size: 0,
-            total_buffer_serialization_ms: 0,
-            total_buffer_compression_ms: 0,
+            total_buffer_serialization_ns: 0,
+            total_buffer_compression_ns: 0,
             total_compressed_buffer_size: 0,
-            total_buffer_decompression_ms: 0,
-            total_buffer_deserialization_ms: 0
+            total_buffer_decompression_ns: 0,
+            total_buffer_deserialization_ns: 0
         }
     }
 }
 
 impl Display for BenchmarkResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let result = format!(" \n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-            self.batch_count,
-            self.row_count,
-            self.total_infer_schema_ms,
-            self.total_buffer_creation_ms,
-            self.total_buffer_size,
-            self.total_buffer_serialization_ms,
-            self.total_buffer_compression_ms,
-            self.total_compressed_buffer_size,
-            self.total_buffer_decompression_ms,
-            self.total_buffer_deserialization_ms
+        let result = format!(" \n{}\n{}\n{:.2}\n{:.2}\n{}\n{:.2}\n{:.2}\n{}\n{:.2}\n{:.2}",
+                             self.batch_count,
+                             self.row_count,
+                             (self.total_infer_schema_ns as f64 / 1000000.0),
+                             (self.total_buffer_creation_ns as f64 / 1000000.0),
+                             self.total_buffer_size,
+                             (self.total_buffer_serialization_ns as f64 / 1000000.0),
+                             (self.total_buffer_compression_ns as f64 / 1000000.0),
+                             self.total_compressed_buffer_size,
+                             (self.total_buffer_decompression_ns as f64 / 1000000.0),
+                             (self.total_buffer_deserialization_ns as f64 / 1000000.0)
         );
         f.write_str(&result)
     }
@@ -146,11 +146,11 @@ fn bench_arrow(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<(),
     let compressed_buf = compress_prepend_size(&buf);
     let elapse_time = Instant::now() - start;
     bench_result.total_compressed_buffer_size += compressed_buf.len();
-    bench_result.total_buffer_compression_ms += elapse_time.as_millis();
+    bench_result.total_buffer_compression_ns += elapse_time.as_nanos();
     let start = Instant::now();
     let buf = decompress_size_prepended(&compressed_buf).unwrap();
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_decompression_ms += elapse_time.as_millis();
+    bench_result.total_buffer_decompression_ns += elapse_time.as_nanos();
     arrow::deserialize(buf, bench_result);
     Ok(())
 }
@@ -162,11 +162,11 @@ fn bench_protobuf(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<
     let compressed_buf = compress_prepend_size(&buf);
     let elapse_time = Instant::now() - start;
     bench_result.total_compressed_buffer_size += compressed_buf.len();
-    bench_result.total_buffer_compression_ms += elapse_time.as_millis();
+    bench_result.total_buffer_compression_ns += elapse_time.as_nanos();
     let start = Instant::now();
     let buf = decompress_size_prepended(&compressed_buf).unwrap();
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_decompression_ms += elapse_time.as_millis();
+    bench_result.total_buffer_decompression_ns += elapse_time.as_nanos();
     protobuf::deserialize(buf, bench_result);
     Ok(())
 }

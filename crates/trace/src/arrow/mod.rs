@@ -52,7 +52,7 @@ pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<V
     let gen_id_column = (event_count + link_count) > 0;
     let span_schema = infer_span_schema(spans, gen_id_column);
     let elapse_time = Instant::now() - start;
-    bench_result.total_infer_schema_ms += elapse_time.as_millis();
+    bench_result.total_infer_schema_ns += elapse_time.as_nanos();
 
     let start = Instant::now();
     let events_buf = serialize_events(event_schema, spans)?;
@@ -75,13 +75,13 @@ pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<V
     };
 
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_creation_ms += elapse_time.as_millis();
+    bench_result.total_buffer_creation_ns += elapse_time.as_nanos();
 
     let start = Instant::now();
     let mut buf: Vec<u8> = Vec::new();
     resource_events.encode(&mut buf)?;
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_serialization_ms += elapse_time.as_millis();
+    bench_result.total_buffer_serialization_ns += elapse_time.as_nanos();
 
     Ok(buf)
 }
@@ -108,7 +108,7 @@ pub fn deserialize(
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_deserialization_ms += elapse_time.as_millis();
+    bench_result.total_buffer_deserialization_ns += elapse_time.as_nanos();
 }
 
 impl FieldInfo {

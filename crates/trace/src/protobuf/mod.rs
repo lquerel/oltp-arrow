@@ -72,13 +72,13 @@ pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<V
 
     // dbg!(&resource_spans);
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_creation_ms += elapse_time.as_millis();
+    bench_result.total_buffer_creation_ns += elapse_time.as_nanos();
 
     let start = Instant::now();
     let mut buf: Vec<u8> = Vec::new();
     resource_spans.encode(&mut buf)?;
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_serialization_ms += elapse_time.as_millis();
+    bench_result.total_buffer_serialization_ns += elapse_time.as_nanos();
 
     Ok(buf)
 }
@@ -88,7 +88,7 @@ pub fn deserialize(buf: Vec<u8>, bench_result: &mut BenchmarkResult) {
     let resource_spans = ResourceSpans::decode(bytes::Bytes::from(buf)).unwrap();
     assert_eq!(resource_spans.instrumentation_library_spans.len(), 1);
     let elapse_time = Instant::now() - start;
-    bench_result.total_buffer_deserialization_ms += elapse_time.as_millis();
+    bench_result.total_buffer_deserialization_ns += elapse_time.as_nanos();
 }
 
 fn attributes(attributes: Option<&Attributes>) -> Vec<KeyValue> {
