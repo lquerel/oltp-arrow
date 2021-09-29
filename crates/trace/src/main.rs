@@ -10,6 +10,8 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use common::{Event, Link, Span};
 use serde_json::Value;
 use std::collections::HashMap;
+use comfy_table::Table;
+use std::fmt::{Display, Formatter};
 
 mod arrow;
 mod protobuf;
@@ -28,7 +30,6 @@ struct Opt {
 
 #[derive(Debug)]
 pub struct BenchmarkResult {
-    file: String,
     batch_count: usize,
     row_count: usize,
     total_infer_schema_ms: u128,
@@ -43,6 +44,7 @@ pub struct BenchmarkResult {
 
 #[derive(Debug)]
 pub struct ArrowVsProto {
+    file: String,
     arrow: BenchmarkResult,
     proto: BenchmarkResult
 }
@@ -53,8 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     opt.files.iter().for_each(|file| {
         let filename = file.as_path().display().to_string();
-        let mut arrow_result = BenchmarkResult::new(&filename);
-        let mut proto_result = BenchmarkResult::new(&filename);
+        let mut arrow_result = BenchmarkResult::new();
+        let mut proto_result = BenchmarkResult::new();
 
         print!("Processing file '{}'...", filename);
         let reader = BufReader::new(File::open(file).unwrap());
@@ -85,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
         bench_results.push(ArrowVsProto {
+            file: filename,
             arrow: arrow_result,
             proto: proto_result
         });
@@ -92,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("DONE.");
     });
 
-    dbg!(bench_results);
+    render_benchmark_results(bench_results);
 
     if opt.files.is_empty() {
         dump_sample_data();
@@ -102,9 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 impl BenchmarkResult {
-    pub fn new(filename: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            file: filename.into(),
             batch_count: 0,
             row_count: 0,
             total_infer_schema_ms: 0,
@@ -116,6 +118,24 @@ impl BenchmarkResult {
             total_buffer_decompression_ms: 0,
             total_buffer_deserialization_ms: 0
         }
+    }
+}
+
+impl Display for BenchmarkResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let result = format!(" \n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            self.batch_count,
+            self.row_count,
+            self.total_infer_schema_ms,
+            self.total_buffer_creation_ms,
+            self.total_buffer_size,
+            self.total_buffer_serialization_ms,
+            self.total_buffer_compression_ms,
+            self.total_compressed_buffer_size,
+            self.total_buffer_decompression_ms,
+            self.total_buffer_deserialization_ms
+        );
+        f.write_str(&result)
     }
 }
 
@@ -206,3 +226,45 @@ fn dump_sample_data() {
     println!("- links");
     println!("- dropped_links_count");
 }
+
+fn render_benchmark_results(results: Vec<ArrowVsProto>) {
+    let metric_labels = r#"  batch count
+  row count
+  total schema inferrence (ms)
+  total buffer creation (ms)
+  total buffer size (bytes)
+  total buffer serialization (ms)
+  total buffer compression (ms)
+  total compressed buffer size (bytes)
+  total buffer decompression (ms)
+  total buffer deserialization (ms)"#;
+    let mut table = Table::new();
+    table.set_header(vec!["File/Metrics", "Protobuf", "Arrow", "Analysis"]);
+
+    for result in results {
+        let mut columns = vec![];
+
+        columns.push(format!("{}\n{}", result.file, metric_labels));
+        columns.push(result.proto.to_string());
+        columns.push(result.arrow.to_string());
+        columns.push("".into());
+
+        table.add_row(columns);
+    }
+
+    println!("{}", table);
+}
+
+/*
+            batch_count: 0,
+            row_count: 0,
+            total_infer_schema_ms: 0,
+            total_buffer_creation_ms: 0,
+            total_buffer_size: 0,
+            total_buffer_serialization_ms: 0,
+            total_buffer_compression_ms: 0,
+            total_compressed_buffer_size: 0,
+            total_buffer_decompression_ms: 0,
+            total_buffer_deserialization_ms: 0
+
+ */
