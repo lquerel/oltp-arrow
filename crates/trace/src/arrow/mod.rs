@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema, UInt8Type, UInt16Type};
 use arrow::ipc::reader::StreamReader;
 use prost::Message;
 use twox_hash::RandomXxHashBuilder64;
@@ -20,12 +20,11 @@ use crate::arrow::link::{infer_link_schema, serialize_links_from_column_oriented
 use crate::arrow::span::{infer_span_schema, serialize_spans_from_column_oriented_data_source};
 use crate::arrow::statistics::{BatchStatistics, ColumnsStatistics};
 use crate::BenchmarkResult;
-use arrow::array::{
-    Array, ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, UInt8Builder,
-};
+use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, UInt8Builder, Int64Builder, Float64Builder, BooleanBuilder, StringDictionaryBuilder, PrimitiveBuilder};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use itertools::Itertools;
 
 mod attribute;
 mod event;
@@ -433,7 +432,55 @@ pub fn u64_nullable_field(field_name: &str, data: &[Option<u64>], fields: &mut V
     });
     let array = builder.finish();
     if array.null_count() < array.len() {
-        fields.push(Field::new(field_name, DataType::UInt64, true));
+        fields.push(Field::new(field_name, DataType::UInt64, array.null_count() > 0));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn i64_nullable_field(field_name: &str, data: &[Option<i64>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = Int64Builder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+            .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::Int64, array.null_count() > 0));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn f64_nullable_field(field_name: &str, data: &[Option<f64>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = Float64Builder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+            .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::Float64, array.null_count() > 0));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn bool_nullable_field(field_name: &str, data: &[Option<bool>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = BooleanBuilder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+            .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::Boolean, array.null_count() > 0));
         columns.push(Arc::new(array));
     }
 }
@@ -449,7 +496,7 @@ pub fn u8_nullable_field(field_name: &str, data: &[Option<u8>], fields: &mut Vec
     });
     let array = builder.finish();
     if array.null_count() < array.len() {
-        fields.push(Field::new(field_name, DataType::UInt8, true));
+        fields.push(Field::new(field_name, DataType::UInt8, array.null_count() > 0));
         columns.push(Arc::new(array));
     }
 }
@@ -470,7 +517,7 @@ pub fn u32_nullable_field(field_name: &str, data: &[Option<u32>], fields: &mut V
     });
     let array = builder.finish();
     if array.null_count() < array.len() {
-        fields.push(Field::new(field_name, DataType::UInt32, true));
+        fields.push(Field::new(field_name, DataType::UInt32, array.null_count() > 0));
         columns.push(Arc::new(array));
     }
 }
@@ -481,24 +528,120 @@ pub fn binary_non_nullable_field(field_name: &str, data: &[String], fields: &mut
 }
 
 pub fn string_non_nullable_field(field_name: &str, data: &[String], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
-    fields.push(Field::new(field_name, DataType::Utf8, false));
-    columns.push(Arc::new(StringArray::from_iter_values(data.iter().map(|v| v.clone()))));
+    let row_count = data.len();
+    let cardinality = data.iter().unique().count();
+
+    if cardinality == 0 {
+        return
+    }
+    let min_num_bits = min_num_bits_to_represent(cardinality);
+    let is_dictionary = min_num_bits <= 16 && (cardinality as f64 / row_count as f64) < 0.2;
+
+    if is_dictionary {
+        if min_num_bits <= 8 {
+            let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt8Type>::new(row_count), StringBuilder::new(row_count));
+            data.iter().for_each(|v| {
+                builder.append(v.clone()).unwrap();
+            });
+            let array = builder.finish();
+            if array.null_count() < array.len() {
+                fields.push(Field::new(
+                    field_name,
+                    DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8)),
+                    array.null_count() > 0,
+                ));
+                columns.push(Arc::new(array));
+            }
+        } else if min_num_bits <= 16 {
+            let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt16Type>::new(row_count), StringBuilder::new(row_count));
+            data.iter().for_each(|v| {
+                builder.append(v.clone()).unwrap();
+            });
+            let array = builder.finish();
+            if array.null_count() < array.len() {
+                fields.push(Field::new(
+                    field_name,
+                    DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
+                    array.null_count() > 0,
+                ));
+                columns.push(Arc::new(array));
+            }
+        }
+    } else {
+        fields.push(Field::new(field_name, DataType::Utf8, false));
+        columns.push(Arc::new(StringArray::from_iter_values(data.iter().map(|v| v.clone()))));
+    }
 }
 
 pub fn string_nullable_field(field_name: &str, data: &[Option<String>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
-    let mut builder = StringBuilder::new(data.len());
-    data.iter().for_each(|value| {
-        match value {
-            None => builder.append_null(),
-            Some(value) => builder.append_value(value.clone()),
+    let mut dictionary_values = HashSet::new();
+    let mut non_null_count = 0;
+    let row_count = data.len();
+    data.iter().for_each(|v| {
+        if let Some(v) = v {
+            dictionary_values.insert(v);
+            non_null_count += 1;
         }
-        .expect("append data into builder failed")
     });
 
-    let array = builder.finish();
-    if array.null_count() < array.len() {
-        fields.push(Field::new(field_name, DataType::Utf8, true));
-        columns.push(Arc::new(array));
+    if dictionary_values.len() == 0 {
+        return
+    }
+
+    let min_num_bits = min_num_bits_to_represent(dictionary_values.len());
+    let is_dictionary = min_num_bits <= 16 && (dictionary_values.len() as f64 / non_null_count as f64) < 0.2;
+
+    if is_dictionary {
+        if min_num_bits <= 8 {
+            let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt8Type>::new(row_count), StringBuilder::new(row_count));
+            data.iter().for_each(|v| match v {
+                None => builder.append_null().unwrap(),
+                Some(v) => {
+                    builder.append(v.clone()).unwrap();
+                }
+            });
+            let array = builder.finish();
+            if array.null_count() < array.len() {
+                fields.push(Field::new(
+                    field_name,
+                    DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8)),
+                    array.null_count() > 0,
+                ));
+                columns.push(Arc::new(array));
+            }
+        } else if min_num_bits <= 16 {
+            let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt16Type>::new(row_count), StringBuilder::new(row_count));
+            data.iter().for_each(|v| match v {
+                None => builder.append_null().unwrap(),
+                Some(v) => {
+                    builder.append(v.clone()).unwrap();
+                }
+            });
+            let array = builder.finish();
+            if array.null_count() < array.len() {
+                fields.push(Field::new(
+                    field_name,
+                    DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
+                    array.null_count() > 0,
+                ));
+                columns.push(Arc::new(array));
+            }
+        }
+    } else {
+        let mut builder = StringBuilder::new(data.len());
+        data.iter().for_each(|value| {
+            match value {
+                None => builder.append_null(),
+                Some(value) => builder.append_value(value.clone()),
+            }
+                .expect("append data into builder failed")
+        });
+
+        let array = builder.finish();
+        if array.null_count() < array.len() {
+            fields.push(Field::new(field_name, DataType::Utf8, array.null_count() > 0));
+            columns.push(Arc::new(array));
+        }
     }
 }
 
@@ -513,7 +656,7 @@ pub fn binary_nullable_field(field_name: &str, data: &[Option<String>], fields: 
     });
     let array = builder.finish();
     if array.null_count() < array.len() {
-        fields.push(Field::new(field_name, DataType::Binary, true));
+        fields.push(Field::new(field_name, DataType::Binary, array.null_count() > 0));
         columns.push(Arc::new(array));
     }
 }
@@ -527,4 +670,13 @@ pub fn serialize(stats: &mut ColumnsStatistics, fields: Vec<Field>, columns: Vec
     writer.write(&batch)?;
     writer.finish()?;
     Ok(writer.into_inner()?)
+}
+
+const fn num_bits<T>() -> usize {
+    std::mem::size_of::<T>() * 8
+}
+
+fn min_num_bits_to_represent(x: usize) -> u32 {
+    assert!(x > 0);
+    num_bits::<usize>() as u32 - x.leading_zeros()
 }

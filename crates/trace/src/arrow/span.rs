@@ -124,7 +124,7 @@ pub fn serialize_spans_from_column_oriented_data_source(stats: &mut ColumnsStati
     u32_nullable_field("dropped_events_count", &spans.dropped_events_count_column, &mut fields, &mut columns);
     u32_nullable_field("dropped_links_count", &spans.dropped_links_count_column, &mut fields, &mut columns);
 
-    attribute_fields("attributes", &data_columns.spans.attributes_column, &mut fields, &mut columns);
+    attribute_fields("attributes_", &data_columns.spans.attributes_column, &mut fields, &mut columns);
 
     serialize(stats, fields, columns)
 }

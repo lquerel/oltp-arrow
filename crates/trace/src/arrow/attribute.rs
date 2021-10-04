@@ -11,7 +11,7 @@ use twox_hash::RandomXxHashBuilder64;
 use common::{Attributes, Span};
 
 use crate::arrow::schema::{FieldInfo, FieldType};
-use crate::arrow::{DataColumn, EntitySchema};
+use crate::arrow::{DataColumn, EntitySchema, u64_nullable_field, i64_nullable_field, f64_nullable_field, bool_nullable_field, string_nullable_field};
 
 pub fn infer_span_attribute_schema(spans: &[Span]) -> HashMap<String, FieldInfo, RandomXxHashBuilder64> {
     let mut schema: HashMap<String, FieldInfo, RandomXxHashBuilder64> = Default::default();
@@ -246,123 +246,20 @@ pub fn add_attribute_columns(attributes: Vec<Option<&Attributes>>, schema: &Enti
 
 pub fn attribute_fields(prefix: &str, attributes_column: &HashMap<String, DataColumn>, fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
     attributes_column.iter().for_each(|(name, data_column)| match data_column {
-        DataColumn::U64Column { missing, values } => {
-            fields.push(Field::new(&format!("{}{}", prefix, name), DataType::UInt64, *missing > 0));
-            let mut builder = UInt64Builder::new(values.len());
-            values.iter().for_each(|value| {
-                match value {
-                    None => builder.append_null(),
-                    Some(value) => builder.append_value(*value),
-                }
-                .expect("append data into builder failed")
-            });
-            columns.push(Arc::new(builder.finish()));
+        DataColumn::U64Column { values, .. } => {
+            u64_nullable_field(&format!("{}{}", prefix, name), &values, fields, columns);
         }
-        DataColumn::I64Column { missing, values } => {
-            fields.push(Field::new(&format!("{}{}", prefix, name), DataType::Int64, *missing > 0));
-            let mut builder = Int64Builder::new(values.len());
-            values.iter().for_each(|value| {
-                match value {
-                    None => builder.append_null(),
-                    Some(value) => builder.append_value(*value),
-                }
-                .expect("append data into builder failed")
-            });
-            columns.push(Arc::new(builder.finish()));
+        DataColumn::I64Column { values, .. } => {
+            i64_nullable_field(&format!("{}{}", prefix, name), &values, fields, columns);
         }
-        DataColumn::F64Column { missing, values } => {
-            fields.push(Field::new(&format!("{}{}", prefix, name), DataType::Float64, *missing > 0));
-            let mut builder = Float64Builder::new(values.len());
-            values.iter().for_each(|value| {
-                match value {
-                    None => builder.append_null(),
-                    Some(value) => builder.append_value(*value),
-                }
-                .expect("append data into builder failed")
-            });
-            columns.push(Arc::new(builder.finish()));
+        DataColumn::F64Column { values, .. } => {
+            f64_nullable_field(&format!("{}{}", prefix, name), &values, fields, columns);
         }
-        DataColumn::StringColumn { missing, values } => {
-            let mut dictionary_values = HashSet::new();
-            let mut non_null_count = 0;
-            let row_count = values.len();
-            values.iter().for_each(|v| {
-                if let Some(v) = v {
-                    dictionary_values.insert(v);
-                    non_null_count += 1;
-                }
-            });
-            let is_dictionary = (dictionary_values.len() as f64 / non_null_count as f64) < 0.2;
-            if is_dictionary {
-                let min_num_bits = min_num_bits_to_represent(dictionary_values.len());
-                if min_num_bits <= 8 {
-                    let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt8Type>::new(row_count), StringBuilder::new(row_count));
-                    values.iter().for_each(|v| match v {
-                        None => builder.append_null().unwrap(),
-                        Some(v) => {
-                            builder.append(v.clone()).unwrap();
-                        }
-                    });
-                    fields.push(Field::new(
-                        &format!("{}{}", prefix, name),
-                        DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8)),
-                        *missing > 0,
-                    ));
-                    columns.push(Arc::new(builder.finish()));
-                } else if min_num_bits <= 16 {
-                    let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt16Type>::new(row_count), StringBuilder::new(row_count));
-                    values.iter().for_each(|v| match v {
-                        None => builder.append_null().unwrap(),
-                        Some(v) => {
-                            builder.append(v.clone()).unwrap();
-                        }
-                    });
-                    fields.push(Field::new(
-                        &format!("{}{}", prefix, name),
-                        DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
-                        *missing > 0,
-                    ));
-                    columns.push(Arc::new(builder.finish()));
-                } else {
-                    let mut builder = StringDictionaryBuilder::new(PrimitiveBuilder::<UInt32Type>::new(row_count), StringBuilder::new(row_count));
-                    values.iter().for_each(|v| match v {
-                        None => builder.append_null().unwrap(),
-                        Some(v) => {
-                            builder.append(v.clone()).unwrap();
-                        }
-                    });
-                    let array = builder.finish();
-                    fields.push(Field::new(
-                        &format!("{}{}", prefix, name),
-                        DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Utf8)),
-                        *missing > 0,
-                    ));
-                    columns.push(Arc::new(array));
-                };
-            } else {
-                fields.push(Field::new(&format!("{}{}", prefix, name), DataType::Utf8, *missing > 0));
-                let mut builder = StringBuilder::new(values.len());
-                values.iter().for_each(|value| {
-                    match value {
-                        None => builder.append_null(),
-                        Some(value) => builder.append_value(value.clone()),
-                    }
-                    .expect("append data into builder failed")
-                });
-                columns.push(Arc::new(builder.finish()));
-            }
+        DataColumn::StringColumn { values, .. } => {
+            string_nullable_field(&format!("{}{}", prefix, name), &values, fields, columns);
         }
-        DataColumn::BoolColumn { missing, values } => {
-            fields.push(Field::new(&format!("{}{}", prefix, name), DataType::Boolean, *missing > 0));
-            let mut builder = BooleanBuilder::new(values.len());
-            values.iter().for_each(|value| {
-                match value {
-                    None => builder.append_null(),
-                    Some(value) => builder.append_value(*value),
-                }
-                .expect("append data into builder failed")
-            });
-            columns.push(Arc::new(builder.finish()));
+        DataColumn::BoolColumn { values, .. } => {
+            bool_nullable_field(&format!("{}{}", prefix, name), &values, fields, columns);
         }
     });
 }
