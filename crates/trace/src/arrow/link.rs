@@ -8,22 +8,16 @@ use arrow::record_batch::RecordBatch;
 
 use common::{Link, Span};
 
-use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_link_attribute_schema, add_attribute_data_columns};
-use crate::arrow::{EntitySchema, DataColumns};
-use crate::arrow::statistics::{ColumnsStatistics};
+use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, attribute_fields, infer_link_attribute_schema};
+use crate::arrow::statistics::ColumnsStatistics;
+use crate::arrow::{serialize, string_non_nullable_field, string_nullable_field, u32_non_nullable_field, u32_nullable_field, DataColumns, EntitySchema};
 
 pub fn serialize_links_from_row_oriented_data_source(stats: &mut ColumnsStatistics, link_schema: EntitySchema, spans: &[Span]) -> Result<Vec<u8>, ArrowError> {
     let links: Vec<(usize, &Link)> = spans
         .iter()
         .enumerate()
         .filter(|(_, link)| link.links.is_some())
-        .flat_map(|(id, link)| {
-            link.links
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(move |link| (id, link))
-        })
+        .flat_map(|(id, link)| link.links.as_ref().unwrap().iter().map(move |link| (id, link)))
         .collect();
 
     let mut trace_state = StringBuilder::new(links.len());
@@ -41,27 +35,14 @@ pub fn serialize_links_from_row_oriented_data_source(stats: &mut ColumnsStatisti
     }
 
     let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(UInt32Array::from_iter_values(
-            links.iter().map(|(id, _)| *id as u32),
-        )),
-        Arc::new(StringArray::from_iter_values(
-            links.iter().map(|(_, link)| link.trace_id.clone()),
-        )),
-        Arc::new(StringArray::from_iter_values(
-            links.iter().map(|(_, link)| link.span_id.clone()),
-        )),
+        Arc::new(UInt32Array::from_iter_values(links.iter().map(|(id, _)| *id as u32))),
+        Arc::new(StringArray::from_iter_values(links.iter().map(|(_, link)| link.trace_id.clone()))),
+        Arc::new(StringArray::from_iter_values(links.iter().map(|(_, link)| link.span_id.clone()))),
         Arc::new(trace_state.finish()),
         Arc::new(dropped_attributes_count.finish()),
     ];
 
-    add_attribute_columns(
-        links
-            .iter()
-            .map(|(_, link)| Some(&link.attributes))
-            .collect(),
-        &link_schema,
-        &mut columns,
-    );
+    add_attribute_columns(links.iter().map(|(_, link)| Some(&link.attributes)).collect(), &link_schema, &mut columns);
 
     stats.report(link_schema.schema.clone(), &columns);
 
@@ -74,50 +55,19 @@ pub fn serialize_links_from_row_oriented_data_source(stats: &mut ColumnsStatisti
 }
 
 pub fn serialize_links_from_column_oriented_data_source(stats: &mut ColumnsStatistics, data_columns: &DataColumns) -> Result<Vec<u8>, ArrowError> {
-    let mut fields = vec![
-        Field::new("id", DataType::UInt32, false),
-        Field::new("trace_id", DataType::Utf8, false),
-        Field::new("span_id", DataType::Utf8, false),
-        Field::new("trace_state", DataType::Utf8, true),
-        Field::new("dropped_attributes_count", DataType::UInt32, true),
-    ];
+    let mut fields = vec![];
+    let mut columns = vec![];
+    let links = &data_columns.links;
 
-    let mut dropped_attributes_count_builder = UInt32Builder::new(data_columns.links.dropped_attributes_count_column.len());
-    data_columns.links.dropped_attributes_count_column.iter().for_each(|value| match value {
-        None => dropped_attributes_count_builder.append_null(),
-        Some(value) => dropped_attributes_count_builder.append_value(*value)
-    }.expect("append data into dropped_attributes_count_builder failed"));
+    u32_non_nullable_field("id", &links.id_column, &mut fields, &mut columns);
+    string_non_nullable_field("trace_id", &links.trace_id_column, &mut fields, &mut columns);
+    string_non_nullable_field("span_id", &links.span_id_column, &mut fields, &mut columns);
+    string_nullable_field("trace_state", &links.trace_state_column, &mut fields, &mut columns);
+    u32_nullable_field("dropped_attributes_count", &links.dropped_attributes_count_column, &mut fields, &mut columns);
 
-    let mut trace_state_builder = StringBuilder::new(data_columns.links.trace_state_column.len());
-    data_columns.links.trace_state_column.iter().for_each(|value| match value {
-        None => trace_state_builder.append_null(),
-        Some(value) => trace_state_builder.append_value(value.clone())
-    }.expect("append data into trace_state_builder failed"));
+    attribute_fields("attributes_", &data_columns.links.attributes_column, &mut fields, &mut columns);
 
-    let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(UInt32Array::from_iter_values(
-            data_columns.links.id_column.iter().map(|id| *id as u32),
-        )),
-        Arc::new(StringArray::from_iter_values(
-            data_columns.links.trace_id_column.iter().map(|name| name.clone()),
-        )),
-        Arc::new(StringArray::from_iter_values(
-            data_columns.links.span_id_column.iter().map(|name| name.clone()),
-        )),
-        Arc::new(trace_state_builder.finish()),
-        Arc::new(dropped_attributes_count_builder.finish()),
-    ];
-
-    add_attribute_data_columns(&mut fields, &mut columns, &data_columns.links.attributes_column);
-
-    let schema = Arc::new(Schema::new(fields));
-    stats.report(schema.clone(), &columns);
-    let batch = RecordBatch::try_new(schema.clone(), columns)?;
-
-    let mut writer = StreamWriter::try_new(Vec::new(), schema.as_ref())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(writer.into_inner()?)
+    serialize(stats, fields, columns)
 }
 
 pub fn infer_link_schema(spans: &[Span]) -> (EntitySchema, usize) {

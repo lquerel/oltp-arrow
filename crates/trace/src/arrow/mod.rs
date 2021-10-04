@@ -1,8 +1,8 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::datatypes::Schema;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use prost::Message;
 use twox_hash::RandomXxHashBuilder64;
@@ -18,15 +18,21 @@ use crate::arrow::attribute::{infer_event_attribute_schema, infer_link_attribute
 use crate::arrow::event::{infer_event_schema, serialize_events_from_column_oriented_data_source};
 use crate::arrow::link::{infer_link_schema, serialize_links_from_column_oriented_data_source};
 use crate::arrow::span::{infer_span_schema, serialize_spans_from_column_oriented_data_source};
+use crate::arrow::statistics::{BatchStatistics, ColumnsStatistics};
 use crate::BenchmarkResult;
-use crate::arrow::statistics::BatchStatistics;
+use arrow::array::{
+    Array, ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, UInt8Builder,
+};
+use arrow::error::ArrowError;
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
 
 mod attribute;
 mod event;
 mod link;
+pub(crate) mod schema;
 mod span;
-pub (crate) mod statistics;
-pub (crate) mod schema;
+pub(crate) mod statistics;
 
 #[derive(Debug)]
 pub struct EntitySchema {
@@ -48,11 +54,11 @@ pub struct SpanDataColumns {
     trace_state_column: Vec<Option<String>>,
     parent_span_id_column: Vec<Option<String>>,
     name_column: Vec<String>,
-    kind_column: Vec<Option<i32>>,
+    kind_column: Vec<Option<u8>>,
     start_time_unix_nano_column: Vec<u64>,
     end_time_unix_nano_column: Vec<Option<u64>>,
     attributes_column: HashMap<String, DataColumn>,
-    dropped_attributes_count_column: Vec<Option<u32>>,
+    dropped_attrs_count_column: Vec<Option<u32>>,
     dropped_events_count_column: Vec<Option<u32>>,
     dropped_links_count_column: Vec<Option<u32>>,
 }
@@ -78,7 +84,7 @@ impl Default for SpanDataColumns {
             start_time_unix_nano_column: vec![],
             end_time_unix_nano_column: vec![],
             attributes_column: Default::default(),
-            dropped_attributes_count_column: vec![],
+            dropped_attrs_count_column: vec![],
             dropped_events_count_column: vec![],
             dropped_links_count_column: vec![],
         }
@@ -87,7 +93,7 @@ impl Default for SpanDataColumns {
 
 #[derive(Debug)]
 pub struct EventDataColumns {
-    id_column: Vec<usize>,
+    id_column: Vec<u32>,
     time_unix_nano_column: Vec<u64>,
     name_column: Vec<String>,
     attributes_column: HashMap<String, DataColumn>,
@@ -117,7 +123,7 @@ impl Default for EventDataColumns {
 
 #[derive(Debug)]
 pub struct LinkDataColumns {
-    id_column: Vec<usize>,
+    id_column: Vec<u32>,
     trace_id_column: Vec<String>,
     span_id_column: Vec<String>,
     trace_state_column: Vec<Option<String>>,
@@ -149,29 +155,18 @@ impl LinkDataColumns {
 
 #[derive(Debug)]
 pub enum DataColumn {
-    U64Column {
-        missing: usize,
-        values: Vec<Option<u64>>,
-    },
-    I64Column {
-        missing: usize,
-        values: Vec<Option<i64>>,
-    },
-    F64Column {
-        missing: usize,
-        values: Vec<Option<f64>>,
-    },
-    StringColumn {
-        missing: usize,
-        values: Vec<Option<String>>,
-    },
-    BoolColumn {
-        missing: usize,
-        values: Vec<Option<bool>>,
-    },
+    U64Column { missing: usize, values: Vec<Option<u64>> },
+    I64Column { missing: usize, values: Vec<Option<i64>> },
+    F64Column { missing: usize, values: Vec<Option<f64>> },
+    StringColumn { missing: usize, values: Vec<Option<String>> },
+    BoolColumn { missing: usize, values: Vec<Option<bool>> },
 }
 
-pub fn serialize_row_oriented_data_source(batch_stats: &mut BatchStatistics, spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn serialize_row_oriented_data_source(
+    batch_stats: &mut BatchStatistics,
+    spans: &[Span],
+    bench_result: &mut BenchmarkResult,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let start = Instant::now();
     let (event_schema, event_count) = infer_event_schema(spans);
     let (link_schema, link_count) = infer_link_schema(spans);
@@ -183,12 +178,7 @@ pub fn serialize_row_oriented_data_source(batch_stats: &mut BatchStatistics, spa
     let start = Instant::now();
     let events_buf = serialize_events_from_row_oriented_data_source(batch_stats.event_stats(), event_schema, spans)?;
     let links_buf = serialize_links_from_row_oriented_data_source(batch_stats.link_stats(), link_schema, spans)?;
-    let spans_buf = serialize_spans_from_row_oriented_data_source(
-        batch_stats.span_stats(),
-        span_schema,
-        spans,
-        gen_id_column,
-    )?;
+    let spans_buf = serialize_spans_from_row_oriented_data_source(batch_stats.span_stats(), span_schema, spans, gen_id_column)?;
 
     let resource_events = ResourceEvents {
         resource: None,
@@ -213,7 +203,11 @@ pub fn serialize_row_oriented_data_source(batch_stats: &mut BatchStatistics, spa
     Ok(buf)
 }
 
-pub fn serialize_column_oriented_data_source(batch_stats: &mut BatchStatistics, spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn serialize_column_oriented_data_source(
+    batch_stats: &mut BatchStatistics,
+    spans: &[Span],
+    bench_result: &mut BenchmarkResult,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let data_columns = to_data_columns(spans);
 
     let start = Instant::now();
@@ -244,25 +238,16 @@ pub fn serialize_column_oriented_data_source(batch_stats: &mut BatchStatistics, 
     Ok(buf)
 }
 
-pub fn deserialize(
-    buf: Vec<u8>,
-    bench_result: &mut BenchmarkResult,
-) {
+pub fn deserialize(buf: Vec<u8>, bench_result: &mut BenchmarkResult) {
     let start = Instant::now();
     let resource_events = ResourceEvents::decode(bytes::Bytes::from(buf)).unwrap();
-    let mut reader =
-        StreamReader::try_new(&resource_events.instrumentation_library_events[0].spans as &[u8])
-            .expect("stream reader error");
+    let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].spans as &[u8]).expect("stream reader error");
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
-    let mut reader =
-        StreamReader::try_new(&resource_events.instrumentation_library_events[0].events as &[u8])
-            .expect("stream reader error");
+    let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].events as &[u8]).expect("stream reader error");
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
-    let mut reader =
-        StreamReader::try_new(&resource_events.instrumentation_library_events[0].links as &[u8])
-            .expect("stream reader error");
+    let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].links as &[u8]).expect("stream reader error");
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
     let elapse_time = Instant::now() - start;
@@ -283,19 +268,18 @@ fn to_data_columns(spans: &[Span]) -> DataColumns {
         data_columns.spans.trace_state_column.push(span.trace_state.clone());
         data_columns.spans.parent_span_id_column.push(span.parent_span_id.clone());
         data_columns.spans.name_column.push(span.name.clone());
-        data_columns.spans.kind_column.push(span.kind.clone());
+        data_columns.spans.kind_column.push(span.kind.map(|v| v as u8));
         data_columns.spans.start_time_unix_nano_column.push(span.start_time_unix_nano);
         data_columns.spans.end_time_unix_nano_column.push(span.end_time_unix_nano.clone());
         attributes_to_data_columns(span.attributes.as_ref(), &mut data_columns.spans.attributes_column);
-        data_columns.spans.dropped_attributes_count_column.push(span.dropped_attributes_count.clone());
+        data_columns.spans.dropped_attrs_count_column.push(span.dropped_attributes_count.clone());
         data_columns.spans.dropped_events_count_column.push(span.dropped_events_count.clone());
         data_columns.spans.dropped_links_count_column.push(span.dropped_links_count.clone());
-
 
         // process event fields
         if let Some(events) = &span.events {
             events.iter().for_each(|event| {
-                data_columns.events.id_column.push(id);
+                data_columns.events.id_column.push(id as u32);
                 data_columns.events.time_unix_nano_column.push(event.time_unix_nano);
                 data_columns.events.name_column.push(event.name.clone());
                 attributes_to_data_columns(Some(&event.attributes), &mut data_columns.events.attributes_column);
@@ -306,7 +290,7 @@ fn to_data_columns(spans: &[Span]) -> DataColumns {
         // process link fields
         if let Some(links) = &span.links {
             links.iter().for_each(|link| {
-                data_columns.links.id_column.push(id);
+                data_columns.links.id_column.push(id as u32);
                 data_columns.links.trace_id_column.push(link.trace_id.clone());
                 data_columns.links.span_id_column.push(link.span_id.clone());
                 data_columns.links.trace_state_column.push(link.trace_state.clone());
@@ -350,7 +334,8 @@ fn attributes_to_data_columns(attributes: Option<&Attributes>, attributes_column
 
             attributes.iter().for_each(|(name, value)| {
                 if !value.is_null() {
-                    let data_column = attributes_column.get_mut(name)
+                    let data_column = attributes_column
+                        .get_mut(name)
                         .expect("missing attribute column, should have been created based on the inference schema mechanism");
 
                     match data_column {
@@ -383,42 +368,40 @@ fn attributes_to_data_columns(attributes: Option<&Attributes>, attributes_column
                 }
             });
 
-            attributes_column.iter_mut()
-                .for_each(|(_name, data_column)| {
-                    match data_column {
-                        DataColumn::U64Column { values, .. }=> {
-                            for _ in 0..(max_row_count-values.len()) {
-                                values.push(None);
-                            }
-                        }
-                        DataColumn::I64Column { values, .. }=> {
-                            for _ in 0..(max_row_count-values.len()) {
-                                values.push(None);
-                            }
-                        }
-                        DataColumn::F64Column { values, .. }=> {
-                            for _ in 0..(max_row_count-values.len()) {
-                                values.push(None);
-                            }
-                        }
-                        DataColumn::StringColumn { values, .. }=> {
-                            for _ in 0..(max_row_count-values.len()) {
-                                values.push(None);
-                            }
-                        }
-                        DataColumn::BoolColumn { values, .. } => {
-                            for _ in 0..(max_row_count-values.len()) {
-                                values.push(None);
-                            }
-                        }
+            attributes_column.iter_mut().for_each(|(_name, data_column)| match data_column {
+                DataColumn::U64Column { values, .. } => {
+                    for _ in 0..(max_row_count - values.len()) {
+                        values.push(None);
                     }
-                });
+                }
+                DataColumn::I64Column { values, .. } => {
+                    for _ in 0..(max_row_count - values.len()) {
+                        values.push(None);
+                    }
+                }
+                DataColumn::F64Column { values, .. } => {
+                    for _ in 0..(max_row_count - values.len()) {
+                        values.push(None);
+                    }
+                }
+                DataColumn::StringColumn { values, .. } => {
+                    for _ in 0..(max_row_count - values.len()) {
+                        values.push(None);
+                    }
+                }
+                DataColumn::BoolColumn { values, .. } => {
+                    for _ in 0..(max_row_count - values.len()) {
+                        values.push(None);
+                    }
+                }
+            });
         }
     }
 }
 
 fn build_attribute_columns(inferred_attributes: HashMap<String, FieldInfo, RandomXxHashBuilder64>) -> HashMap<String, DataColumn> {
-    inferred_attributes.iter()
+    inferred_attributes
+        .iter()
         .map(|(field_name, field)| {
             (
                 field_name.clone(),
@@ -428,8 +411,120 @@ fn build_attribute_columns(inferred_attributes: HashMap<String, FieldInfo, Rando
                     FieldType::F64 => DataColumn::F64Column { missing: 0, values: vec![] },
                     FieldType::String => DataColumn::StringColumn { missing: 0, values: vec![] },
                     FieldType::Bool => DataColumn::BoolColumn { missing: 0, values: vec![] },
-                }
+                },
             )
         })
         .collect()
+}
+
+pub fn u64_non_nullable_field(field_name: &str, data: &[u64], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    fields.push(Field::new(field_name, DataType::UInt64, false));
+    columns.push(Arc::new(UInt64Array::from_iter_values(data.iter().map(|v| *v))));
+}
+
+pub fn u64_nullable_field(field_name: &str, data: &[Option<u64>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = UInt64Builder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+        .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::UInt64, true));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn u8_nullable_field(field_name: &str, data: &[Option<u8>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = UInt8Builder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+        .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::UInt8, true));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn u32_non_nullable_field(field_name: &str, data: &[u32], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    fields.push(Field::new(field_name, DataType::UInt32, false));
+    columns.push(Arc::new(UInt32Array::from_iter_values(data.iter().map(|v| *v))));
+}
+
+pub fn u32_nullable_field(field_name: &str, data: &[Option<u32>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = UInt32Builder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(*value),
+        }
+        .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::UInt32, true));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn binary_non_nullable_field(field_name: &str, data: &[String], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    fields.push(Field::new(field_name, DataType::Binary, false));
+    columns.push(Arc::new(BinaryArray::from(data.iter().map(|v| v.as_bytes()).collect::<Vec<&[u8]>>())));
+}
+
+pub fn string_non_nullable_field(field_name: &str, data: &[String], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    fields.push(Field::new(field_name, DataType::Utf8, false));
+    columns.push(Arc::new(StringArray::from_iter_values(data.iter().map(|v| v.clone()))));
+}
+
+pub fn string_nullable_field(field_name: &str, data: &[Option<String>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = StringBuilder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(value.clone()),
+        }
+        .expect("append data into builder failed")
+    });
+
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::Utf8, true));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn binary_nullable_field(field_name: &str, data: &[Option<String>], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    let mut builder = BinaryBuilder::new(data.len());
+    data.iter().for_each(|value| {
+        match value {
+            None => builder.append_null(),
+            Some(value) => builder.append_value(value.as_bytes()),
+        }
+        .expect("append data into builder failed")
+    });
+    let array = builder.finish();
+    if array.null_count() < array.len() {
+        fields.push(Field::new(field_name, DataType::Binary, true));
+        columns.push(Arc::new(array));
+    }
+}
+
+pub fn serialize(stats: &mut ColumnsStatistics, fields: Vec<Field>, columns: Vec<ArrayRef>) -> Result<Vec<u8>, ArrowError> {
+    let schema = Arc::new(Schema::new(fields));
+    stats.report(schema.clone(), &columns);
+    let batch = RecordBatch::try_new(schema.clone(), columns)?;
+
+    let mut writer = StreamWriter::try_new(Vec::new(), schema.as_ref())?;
+    writer.write(&batch)?;
+    writer.finish()?;
+    Ok(writer.into_inner()?)
 }

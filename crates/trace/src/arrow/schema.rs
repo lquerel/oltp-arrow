@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use serde::Serialize;
+use std::collections::HashSet;
 
 #[derive(PartialEq, Debug)]
 pub struct FieldInfo {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder};
+use arrow::array::{ArrayRef, BinaryArray, BinaryBuilder, StringArray, StringBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, UInt8Builder};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::StreamWriter;
@@ -8,9 +8,12 @@ use arrow::record_batch::RecordBatch;
 
 use common::Span;
 
-use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, infer_span_attribute_schema, add_attribute_data_columns};
-use crate::arrow::{EntitySchema, DataColumns};
-use crate::arrow::statistics::{ColumnsStatistics};
+use crate::arrow::attribute::{add_attribute_columns, add_attribute_fields, attribute_fields, infer_span_attribute_schema};
+use crate::arrow::statistics::ColumnsStatistics;
+use crate::arrow::{
+    binary_non_nullable_field, binary_nullable_field, serialize, string_non_nullable_field, string_nullable_field, u32_nullable_field, u64_non_nullable_field,
+    u64_nullable_field, u8_nullable_field, DataColumns, EntitySchema,
+};
 
 pub fn serialize_spans_from_row_oriented_data_source(
     stats: &mut ColumnsStatistics,
@@ -21,7 +24,7 @@ pub fn serialize_spans_from_row_oriented_data_source(
     let mut end_time_unix_nano = UInt64Builder::new(spans.len());
     let mut trace_state = StringBuilder::new(spans.len());
     let mut parent_span_id = BinaryBuilder::new(spans.len());
-    let mut kind = UInt32Builder::new(spans.len());
+    let mut kind = UInt8Builder::new(spans.len());
     let mut dropped_attributes_count = UInt32Builder::new(spans.len());
     let mut dropped_events_count = UInt32Builder::new(spans.len());
     let mut dropped_links_count = UInt32Builder::new(spans.len());
@@ -43,7 +46,7 @@ pub fn serialize_spans_from_row_oriented_data_source(
         }?;
 
         match span.kind {
-            Some(value) => kind.append_value(value as u32),
+            Some(value) => kind.append_value(value as u8),
             None => kind.append_null(),
         }?;
 
@@ -64,27 +67,13 @@ pub fn serialize_spans_from_row_oriented_data_source(
     }
 
     let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(UInt64Array::from_iter_values(
-            spans.iter().map(|span| span.start_time_unix_nano),
-        )),
+        Arc::new(UInt64Array::from_iter_values(spans.iter().map(|span| span.start_time_unix_nano))),
         Arc::new(end_time_unix_nano.finish()),
-        Arc::new(BinaryArray::from(
-            spans
-                .iter()
-                .map(|span| span.trace_id.as_bytes())
-                .collect::<Vec<&[u8]>>(),
-        )),
-        Arc::new(BinaryArray::from(
-            spans
-                .iter()
-                .map(|span| span.span_id.as_bytes())
-                .collect::<Vec<&[u8]>>(),
-        )),
+        Arc::new(BinaryArray::from(spans.iter().map(|span| span.trace_id.as_bytes()).collect::<Vec<&[u8]>>())),
+        Arc::new(BinaryArray::from(spans.iter().map(|span| span.span_id.as_bytes()).collect::<Vec<&[u8]>>())),
         Arc::new(trace_state.finish()),
         Arc::new(parent_span_id.finish()),
-        Arc::new(StringArray::from_iter_values(
-            spans.iter().map(|span| span.name.clone()),
-        )),
+        Arc::new(StringArray::from_iter_values(spans.iter().map(|span| span.name.clone()))),
         Arc::new(kind.finish()),
         Arc::new(dropped_attributes_count.finish()),
         Arc::new(dropped_events_count.finish()),
@@ -92,16 +81,10 @@ pub fn serialize_spans_from_row_oriented_data_source(
     ];
 
     if gen_id_column {
-        columns.push(Arc::new(UInt32Array::from_iter_values(
-            0..spans.len() as u32,
-        )));
+        columns.push(Arc::new(UInt32Array::from_iter_values(0..spans.len() as u32)));
     }
 
-    add_attribute_columns(
-        spans.iter().map(|span| span.attributes.as_ref()).collect(),
-        &span_schema,
-        &mut columns,
-    );
+    add_attribute_columns(spans.iter().map(|span| span.attributes.as_ref()).collect(), &span_schema, &mut columns);
 
     stats.report(span_schema.schema.clone(), &columns);
 
@@ -125,109 +108,25 @@ pub fn serialize_spans_from_row_oriented_data_source(
 }
 
 pub fn serialize_spans_from_column_oriented_data_source(stats: &mut ColumnsStatistics, data_columns: &DataColumns) -> Result<Vec<u8>, ArrowError> {
-    let mut fields = vec![
-        Field::new("start_time_unix_nano", DataType::UInt64, false),
-        Field::new("end_time_unix_nano", DataType::UInt64, true),
-        Field::new("trace_id", DataType::Binary, false),
-        Field::new("span_id", DataType::Binary, false),
-        Field::new("trace_state", DataType::Utf8, true),
-        Field::new("parent_span_id", DataType::Binary, true),
-        Field::new("name", DataType::Utf8, false),
-        Field::new("kind", DataType::UInt32, true),
-        Field::new("dropped_attributes_count", DataType::UInt32, true),
-        Field::new("dropped_events_count", DataType::UInt32, true),
-        Field::new("dropped_links_count", DataType::UInt32, true),
-    ];
+    let mut fields = vec![];
+    let mut columns = vec![];
+    let spans = &data_columns.spans;
 
-    let mut end_time_unix_nano_builder = UInt64Builder::new(data_columns.spans.end_time_unix_nano_column.len());
-    data_columns.spans.end_time_unix_nano_column.iter().for_each(|value| match value {
-        None => end_time_unix_nano_builder.append_null(),
-        Some(value) => end_time_unix_nano_builder.append_value(*value)
-    }.expect("append data into dropped_attributes_count_builder failed"));
+    u64_non_nullable_field("start_time_unix_nano", &spans.start_time_unix_nano_column, &mut fields, &mut columns);
+    u64_nullable_field("end_time_unix_nano", &spans.end_time_unix_nano_column, &mut fields, &mut columns);
+    binary_non_nullable_field("trace_id", &spans.trace_id_column, &mut fields, &mut columns);
+    binary_non_nullable_field("span_id", &spans.span_id_column, &mut fields, &mut columns);
+    string_nullable_field("trace_state", &spans.trace_state_column, &mut fields, &mut columns);
+    binary_nullable_field("parent_span_id", &spans.parent_span_id_column, &mut fields, &mut columns);
+    string_non_nullable_field("name", &spans.name_column, &mut fields, &mut columns);
+    u8_nullable_field("kind", &spans.kind_column, &mut fields, &mut columns);
+    u32_nullable_field("dropped_attributes_count", &spans.dropped_attrs_count_column, &mut fields, &mut columns);
+    u32_nullable_field("dropped_events_count", &spans.dropped_events_count_column, &mut fields, &mut columns);
+    u32_nullable_field("dropped_links_count", &spans.dropped_links_count_column, &mut fields, &mut columns);
 
-    let mut dropped_attributes_count_builder = UInt32Builder::new(data_columns.spans.dropped_attributes_count_column.len());
-    data_columns.spans.dropped_attributes_count_column.iter().for_each(|value| match value {
-        None => dropped_attributes_count_builder.append_null(),
-        Some(value) => dropped_attributes_count_builder.append_value(*value)
-    }.expect("append data into dropped_attributes_count_builder failed"));
+    attribute_fields("attributes", &data_columns.spans.attributes_column, &mut fields, &mut columns);
 
-    let mut dropped_events_count_builder = UInt32Builder::new(data_columns.spans.dropped_events_count_column.len());
-    data_columns.spans.dropped_events_count_column.iter().for_each(|value| match value {
-        None => dropped_events_count_builder.append_null(),
-        Some(value) => dropped_events_count_builder.append_value(*value)
-    }.expect("append data into dropped_attributes_count_builder failed"));
-
-    let mut dropped_links_count_builder = UInt32Builder::new(data_columns.spans.dropped_links_count_column.len());
-    data_columns.spans.dropped_links_count_column.iter().for_each(|value| match value {
-        None => dropped_links_count_builder.append_null(),
-        Some(value) => dropped_links_count_builder.append_value(*value)
-    }.expect("append data into dropped_attributes_count_builder failed"));
-
-    let mut trace_state_builder = StringBuilder::new(data_columns.spans.trace_state_column.len());
-    data_columns.spans.trace_state_column.iter().for_each(|value| match value {
-        None => trace_state_builder.append_null(),
-        Some(value) => trace_state_builder.append_value(value.clone())
-    }.expect("append data into trace_state_builder failed"));
-
-    let mut parent_span_id_builder = BinaryBuilder::new(data_columns.spans.parent_span_id_column.len());
-    data_columns.spans.parent_span_id_column.iter().for_each(|value| match value {
-        None => parent_span_id_builder.append_null(),
-        Some(value) => parent_span_id_builder.append_value(value.as_bytes())
-    }.expect("append data into parent_span_id_builder failed"));
-
-    let mut kind_builder = UInt32Builder::new(data_columns.spans.kind_column.len());
-    data_columns.spans.kind_column.iter().for_each(|value| match value {
-        None => kind_builder.append_null(),
-        Some(value) => kind_builder.append_value(*value as u32)
-    }.expect("append data into dropped_attributes_count_builder failed"));
-
-    let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(UInt64Array::from_iter_values(
-            data_columns.spans.start_time_unix_nano_column.iter().map(|id| *id),
-        )),
-        Arc::new(end_time_unix_nano_builder.finish()),
-        Arc::new(BinaryArray::from(
-            data_columns.spans.trace_id_column
-                .iter()
-                .map(|trace_id| trace_id.as_bytes())
-                .collect::<Vec<&[u8]>>(),
-        )),
-        Arc::new(BinaryArray::from(
-            data_columns.spans.span_id_column
-                .iter()
-                .map(|span_id| span_id.as_bytes())
-                .collect::<Vec<&[u8]>>(),
-        )),
-        Arc::new(trace_state_builder.finish()),
-        Arc::new(parent_span_id_builder.finish()),
-        Arc::new(StringArray::from_iter_values(
-            data_columns.spans.name_column.iter().map(|name| name.clone()),
-        )),
-        Arc::new(kind_builder.finish()),
-        Arc::new(dropped_attributes_count_builder.finish()),
-        Arc::new(dropped_events_count_builder.finish()),
-        Arc::new(dropped_links_count_builder.finish()),
-    ];
-
-    add_attribute_data_columns(&mut fields, &mut columns, &data_columns.spans.attributes_column);
-
-    let schema = Arc::new(Schema::new(fields));
-    stats.report(schema.clone(), &columns);
-    let batch = RecordBatch::try_new(schema.clone(), columns)?;
-
-    let mut writer = StreamWriter::try_new(Vec::new(), schema.as_ref())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-
-    // let mut buf = Vec::new();
-    // {
-    //     let mut writer = LineDelimitedWriter::new(&mut buf);
-    //     writer.write_batches(&[batch]).unwrap();
-    // }
-    //
-    // println!("{}", String::from_utf8(buf).unwrap());
-
-    Ok(writer.into_inner()?)
+    serialize(stats, fields, columns)
 }
 
 pub fn infer_span_schema(spans: &[Span], gen_id_column: bool) -> EntitySchema {
@@ -239,7 +138,7 @@ pub fn infer_span_schema(spans: &[Span], gen_id_column: bool) -> EntitySchema {
         Field::new("trace_state", DataType::Utf8, true),
         Field::new("parent_span_id", DataType::Binary, true),
         Field::new("name", DataType::Utf8, false),
-        Field::new("kind", DataType::UInt32, true),
+        Field::new("kind", DataType::UInt8, true),
         Field::new("dropped_attributes_count", DataType::UInt32, true),
         Field::new("dropped_events_count", DataType::UInt32, true),
         Field::new("dropped_links_count", DataType::UInt32, true),
@@ -258,4 +157,3 @@ pub fn infer_span_schema(spans: &[Span], gen_id_column: bool) -> EntitySchema {
         attribute_fields: attribute_types,
     }
 }
-

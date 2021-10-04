@@ -1,9 +1,12 @@
-use std::collections::{BTreeMap};
-use serde::Serialize;
-use std::sync::Arc;
-use arrow::datatypes::{Schema, DataType, UInt8Type, UInt16Type, UInt32Type};
-use arrow::array::{ArrayRef, BooleanArray, Array, Int8Array, Int32Array, Int64Array, UInt8Array, UInt32Array, UInt64Array, Float64Array, BinaryArray, StringArray, DictionaryArray};
+use arrow::array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, DictionaryArray, Float64Array, Int32Array, Int64Array, Int8Array, StringArray, UInt32Array, UInt64Array,
+    UInt8Array,
+};
+use arrow::datatypes::{DataType, Schema, UInt16Type, UInt32Type, UInt8Type};
 use itertools::Itertools;
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
 pub struct StatisticsReporter {
@@ -49,11 +52,19 @@ pub enum ColumnType {
 
 impl StatisticsReporter {
     pub fn new(file: &str) -> Self {
-        Self { file: file.into(), batches: vec![], stats_enabled: true }
+        Self {
+            file: file.into(),
+            batches: vec![],
+            stats_enabled: true,
+        }
     }
 
     pub fn noop() -> Self {
-        Self { file: "".into(), batches: vec![], stats_enabled: false}
+        Self {
+            file: "".into(),
+            batches: vec![],
+            stats_enabled: false,
+        }
     }
 
     pub fn next_batch(&mut self) -> &mut BatchStatistics {
@@ -61,7 +72,7 @@ impl StatisticsReporter {
             stats_enabled: self.stats_enabled,
             span_columns: ColumnsStatistics::new(self.stats_enabled),
             event_columns: ColumnsStatistics::new(self.stats_enabled),
-            link_columns: ColumnsStatistics::new(self.stats_enabled)
+            link_columns: ColumnsStatistics::new(self.stats_enabled),
         });
         self.batches.last_mut().unwrap()
     }
@@ -89,7 +100,10 @@ impl BatchStatistics {
 
 impl ColumnsStatistics {
     pub fn new(stats_enabled: bool) -> ColumnsStatistics {
-        Self { stats_enabled, columns: Default::default() }
+        Self {
+            stats_enabled,
+            columns: Default::default(),
+        }
     }
 
     pub fn report(&mut self, schema: Arc<Schema>, array_data: &[ArrayRef]) {
@@ -107,7 +121,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::Boolean,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -117,7 +137,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::I8,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -127,7 +153,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::I32,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -137,7 +169,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::I64,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -147,7 +185,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::U8,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -157,7 +201,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::U32,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -167,7 +217,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::U64,
                             total_values: column.len(),
-                            cardinality: column.values().iter().unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -177,7 +233,13 @@ impl ColumnsStatistics {
                         ColumnStatistics {
                             column_type: ColumnType::F64,
                             total_values: column.len(),
-                            cardinality: column.values().iter().map(|v| v.to_be_bytes()).unique().count(),
+                            cardinality: column
+                                .values()
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, v)| if column.is_valid(i) { Some(v.to_be_bytes()) } else { None })
+                                .unique()
+                                .count(),
                             missing_values: column.null_count(),
                             dictionary: false,
                         }
@@ -202,42 +264,40 @@ impl ColumnsStatistics {
                             dictionary: false,
                         }
                     }
-                    DataType::Dictionary(index_type, _data_type) => {
-                        match index_type.as_ref() {
-                            DataType::UInt8 => {
-                                let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt8Type>>().unwrap();
-                                ColumnStatistics {
-                                    column_type: ColumnType::String,
-                                    total_values: column.keys().len(),
-                                    cardinality: column.keys().iter().unique().count(),
-                                    missing_values: column.null_count(),
-                                    dictionary: true,
-                                }
+                    DataType::Dictionary(index_type, _data_type) => match index_type.as_ref() {
+                        DataType::UInt8 => {
+                            let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt8Type>>().unwrap();
+                            ColumnStatistics {
+                                column_type: ColumnType::String,
+                                total_values: column.keys().len(),
+                                cardinality: column.keys().iter().filter_map(|v| v).unique().count(),
+                                missing_values: column.null_count(),
+                                dictionary: true,
                             }
-                            DataType::UInt16 => {
-                                let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt16Type>>().unwrap();
-                                ColumnStatistics {
-                                    column_type: ColumnType::String,
-                                    total_values: column.keys().len(),
-                                    cardinality: column.keys().iter().unique().count(),
-                                    missing_values: column.null_count(),
-                                    dictionary: true,
-                                }
-                            }
-                            DataType::UInt32 => {
-                                let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt32Type>>().unwrap();
-                                ColumnStatistics {
-                                    column_type: ColumnType::String,
-                                    total_values: column.keys().len(),
-                                    cardinality: column.keys().iter().unique().count(),
-                                    missing_values: column.null_count(),
-                                    dictionary: true,
-                                }
-                            }
-                            _ => panic!("unsupported index type '{}'", index_type.as_ref())
                         }
-                    }
-                    _ => panic!("unsupported column type '{}'", field.data_type())
+                        DataType::UInt16 => {
+                            let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt16Type>>().unwrap();
+                            ColumnStatistics {
+                                column_type: ColumnType::String,
+                                total_values: column.keys().len(),
+                                cardinality: column.keys().iter().filter_map(|v| v).unique().count(),
+                                missing_values: column.null_count(),
+                                dictionary: true,
+                            }
+                        }
+                        DataType::UInt32 => {
+                            let column = array_data[i].as_any().downcast_ref::<DictionaryArray<UInt32Type>>().unwrap();
+                            ColumnStatistics {
+                                column_type: ColumnType::String,
+                                total_values: column.keys().len(),
+                                cardinality: column.keys().iter().filter_map(|v| v).unique().count(),
+                                missing_values: column.null_count(),
+                                dictionary: true,
+                            }
+                        }
+                        _ => panic!("unsupported index type '{}'", index_type.as_ref()),
+                    },
+                    _ => panic!("unsupported column type '{}'", field.data_type()),
                 };
 
                 self.columns.insert(field.name().clone(), column_stats);

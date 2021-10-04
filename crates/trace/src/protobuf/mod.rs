@@ -3,13 +3,13 @@ use std::time::Instant;
 use prost::{EncodeError, Message};
 use serde_json::Value;
 
+use crate::BenchmarkResult;
 use common::{Attributes, Span};
 use oltp::opentelemetry::proto::common::v1::any_value;
 use oltp::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
 use oltp::opentelemetry::proto::trace;
 use oltp::opentelemetry::proto::trace::v1::span::{Event, Link};
 use oltp::opentelemetry::proto::trace::v1::{InstrumentationLibrarySpans, ResourceSpans};
-use crate::BenchmarkResult;
 
 pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<Vec<u8>, EncodeError> {
     let start = Instant::now();
@@ -24,11 +24,7 @@ pub fn serialize(spans: &[Span], bench_result: &mut BenchmarkResult) -> Result<V
                     trace_id: span.trace_id.clone().into_bytes(),
                     span_id: span.span_id.clone().into_bytes(),
                     trace_state: span.trace_state.clone().unwrap_or_else(|| "".into()),
-                    parent_span_id: span
-                        .parent_span_id
-                        .clone()
-                        .unwrap_or_else(|| "".into())
-                        .into_bytes(),
+                    parent_span_id: span.parent_span_id.clone().unwrap_or_else(|| "".into()).into_bytes(),
                     name: span.name.clone(),
                     kind: span.kind.unwrap_or(0),
                     start_time_unix_nano: span.start_time_unix_nano,
@@ -95,33 +91,30 @@ fn attributes(attributes: Option<&Attributes>) -> Vec<KeyValue> {
     attributes
         .iter()
         .flat_map(|attributes| {
-            attributes
-                .iter()
-                .filter(|(_, value)| !value.is_null())
-                .map(|(key, value)| KeyValue {
-                    key: key.clone(),
-                    value: match value {
-                        Value::Null => None,
-                        Value::Bool(v) => Some(AnyValue {
-                            value: Some(any_value::Value::BoolValue(*v)),
+            attributes.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| KeyValue {
+                key: key.clone(),
+                value: match value {
+                    Value::Null => None,
+                    Value::Bool(v) => Some(AnyValue {
+                        value: Some(any_value::Value::BoolValue(*v)),
+                    }),
+                    Value::Number(v) => Some(AnyValue {
+                        value: Some(if v.is_i64() {
+                            any_value::Value::IntValue(v.as_i64().unwrap_or(0))
+                        } else {
+                            any_value::Value::DoubleValue(v.as_f64().unwrap_or(0.0))
                         }),
-                        Value::Number(v) => Some(AnyValue {
-                            value: Some(if v.is_i64() {
-                                any_value::Value::IntValue(v.as_i64().unwrap_or(0))
-                            } else {
-                                any_value::Value::DoubleValue(v.as_f64().unwrap_or(0.0))
-                            }),
-                        }),
-                        Value::String(v) => Some(AnyValue {
-                            value: Some(any_value::Value::StringValue(v.clone())),
-                        }),
-                        Value::Array(_) => unimplemented!("attribute array value not supported"),
-                        Value::Object(_) => {
-                            println!("{} -> {}", key, value);
-                            unimplemented!("attribute object value not supported")
-                        }
-                    },
-                })
+                    }),
+                    Value::String(v) => Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(v.clone())),
+                    }),
+                    Value::Array(_) => unimplemented!("attribute array value not supported"),
+                    Value::Object(_) => {
+                        println!("{} -> {}", key, value);
+                        unimplemented!("attribute object value not supported")
+                    }
+                },
+            })
         })
         .collect()
 }
