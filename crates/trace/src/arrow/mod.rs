@@ -243,12 +243,16 @@ pub fn deserialize(buf: Vec<u8>, bench_result: &mut BenchmarkResult) {
     let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].spans as &[u8]).expect("stream reader error");
     let batch = reader.next().unwrap().unwrap();
     assert!(batch.num_columns() > 0);
-    let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].events as &[u8]).expect("stream reader error");
-    let batch = reader.next().unwrap().unwrap();
-    assert!(batch.num_columns() > 0);
-    let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].links as &[u8]).expect("stream reader error");
-    let batch = reader.next().unwrap().unwrap();
-    assert!(batch.num_columns() > 0);
+    if !(&resource_events.instrumentation_library_events[0].events as &[u8]).is_empty() {
+        let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].events as &[u8]).expect("stream reader error");
+        let batch = reader.next().unwrap().unwrap();
+        assert!(batch.num_columns() > 0);
+    }
+    if !(&resource_events.instrumentation_library_events[0].links as &[u8]).is_empty() {
+        let mut reader = StreamReader::try_new(&resource_events.instrumentation_library_events[0].links as &[u8]).expect("stream reader error");
+        let batch = reader.next().unwrap().unwrap();
+        assert!(batch.num_columns() > 0);
+    }
     let elapse_time = Instant::now() - start;
     bench_result.total_buffer_deserialization_ns += elapse_time.as_nanos();
 }
@@ -417,6 +421,9 @@ fn build_attribute_columns(inferred_attributes: HashMap<String, FieldInfo, Rando
 }
 
 pub fn u64_non_nullable_field(field_name: &str, data: &[u64], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    if data.is_empty() {
+        return;
+    }
     fields.push(Field::new(field_name, DataType::UInt64, false));
     columns.push(Arc::new(UInt64Array::from_iter_values(data.iter().map(|v| *v))));
 }
@@ -502,6 +509,9 @@ pub fn u8_nullable_field(field_name: &str, data: &[Option<u8>], fields: &mut Vec
 }
 
 pub fn u32_non_nullable_field(field_name: &str, data: &[u32], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    if data.is_empty() {
+        return;
+    }
     fields.push(Field::new(field_name, DataType::UInt32, false));
     columns.push(Arc::new(UInt32Array::from_iter_values(data.iter().map(|v| *v))));
 }
@@ -523,6 +533,9 @@ pub fn u32_nullable_field(field_name: &str, data: &[Option<u32>], fields: &mut V
 }
 
 pub fn binary_non_nullable_field(field_name: &str, data: &[String], fields: &mut Vec<Field>, columns: &mut Vec<ArrayRef>) {
+    if data.is_empty() {
+        return;
+    }
     fields.push(Field::new(field_name, DataType::Binary, false));
     columns.push(Arc::new(BinaryArray::from(data.iter().map(|v| v.as_bytes()).collect::<Vec<&[u8]>>())));
 }
@@ -662,6 +675,10 @@ pub fn binary_nullable_field(field_name: &str, data: &[Option<String>], fields: 
 }
 
 pub fn serialize(stats: &mut ColumnsStatistics, fields: Vec<Field>, columns: Vec<ArrayRef>) -> Result<Vec<u8>, ArrowError> {
+    if fields.is_empty() {
+        return Ok(vec![])
+    }
+
     let schema = Arc::new(Schema::new(fields));
     stats.report(schema.clone(), &columns);
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
