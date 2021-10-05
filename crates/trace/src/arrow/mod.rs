@@ -31,7 +31,7 @@ mod event;
 mod link;
 pub(crate) mod schema;
 mod span;
-pub(crate) mod statistics;
+pub mod statistics;
 
 #[derive(Debug)]
 pub struct EntitySchema {

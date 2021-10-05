@@ -18,3 +18,4 @@ twox-hash = "1"
 itertools = "0.10"
 clap = "3.0.0-beta.4"
 comfy-table = "4"
+bitvec = {version="0.22", features=["serde"]}
