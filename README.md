@@ -57,7 +57,7 @@ a description of the schema for each column. Additionally, string columns can us
 
 Consequently, to improve your results it is recommended to:
 * Group spans in batch (> 1000 entries)
-* When possible, group spans sharing the same attributes to minimize  
+* When possible, group spans sharing the same attributes to minimize (reduce column sparsity, and could increase data redundancy)  
 
 The option -s generates a set of json files containing statistics information on the processed batches. These files can
 be helpful to optimize the definition of your batch.
